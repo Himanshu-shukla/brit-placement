@@ -1,0 +1,31 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Apply — Example Ltd</title>
+<style>.menu{border:1px solid #999}.menu div{padding:4px}.shadow{opacity:0;position:absolute;height:1px;width:1px}</style></head><body>
+<!-- Mimics Greenhouse's react-select: the dropdown ignores untrusted (scripted) events, keeps a hidden
+     required validation input, and shows the chosen value in a sibling "single-value" element. -->
+<form id="f">
+  <label for="first_name">First Name*</label><input id="first_name" required>
+  <label for="email">Email*</label><input id="email" type="email" required>
+  <div class="select-shell"><label id="visa-label">Would you need us to sponsor a work visa?*</label>
+    <div class="select__control" id="visa-control"><div class="select__value-container">
+      <div class="select__single-value" id="visa-value"></div>
+      <input id="visa" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-labelledby="visa-label" aria-required="true" autocomplete="off">
+    </div></div>
+    <input class="shadow" tabindex="-1" aria-hidden="true" required id="visa-shadow">
+  </div>
+  <div class="menu" id="menu" hidden></div>
+  <button type="submit">Submit application</button>
+</form>
+<script>
+const OPTIONS=['Yes','No'];
+const input=document.getElementById('visa'),menu=document.getElementById('menu'),value=document.getElementById('visa-value');
+function open(filter=''){menu.innerHTML='';for(const o of OPTIONS.filter(x=>x.toLowerCase().startsWith(filter.toLowerCase()))){const d=document.createElement('div');d.setAttribute('role','option');d.textContent=o;d.onclick=e=>{if(e.isTrusted)choose(o)};menu.appendChild(d)}menu.hidden=false;input.setAttribute('aria-expanded','true')}
+function close(){menu.hidden=true;input.setAttribute('aria-expanded','false')}
+function choose(o){value.textContent=o;document.getElementById('visa-shadow').value=o;input.value='';close()}
+document.getElementById('visa-control').addEventListener('mousedown',e=>{if(e.isTrusted)open()});
+input.addEventListener('input',e=>{if(e.isTrusted)open(input.value)});
+input.addEventListener('keydown',e=>{if(!e.isTrusted)return;if(e.key==='Escape')close();if(e.key==='Enter'){e.preventDefault();const first=menu.querySelector('[role=option]');if(first&&!menu.hidden)choose(first.textContent)}});
+document.getElementById('f').onsubmit=async e=>{e.preventDefault();
+  if(!document.getElementById('visa-shadow').value)return;
+  await fetch('/record',{method:'POST',body:JSON.stringify({first_name:document.getElementById('first_name').value,visa:value.textContent})});
+  location.href='/thanks.html'};
+</script></body></html>

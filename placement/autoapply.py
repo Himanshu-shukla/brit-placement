@@ -1,211 +1,215 @@
-"""Conservative unattended applicant automation for explicitly allowed employer sites.
+"""Server-side automatic applications on employer / ATS pages (Greenhouse, Lever, Ashby,
+Workable, SmartRecruiters, company career sites...).
 
-Requires Playwright, a configured employer-domain allowlist and explicit opt-in.
-Does not automate LinkedIn/Indeed/Glassdoor, solve challenges, fabricate answers,
-or mark success without a visible confirmation.
+Runs the same apply engine as the Chrome extension (extension/engine.js) inside Playwright
+Chromium. Job boards that need the candidate's own login (LinkedIn, Indeed, Glassdoor, Reed,
+Totaljobs...) are routed to the extension instead, and pages that show a CAPTCHA or a login
+are handed to the extension to retry in the candidate's real browser.
 """
 
-import os
-import re
+import random
 from urllib.parse import urlsplit
 
-from . import db, cv_files, questions
+from . import applyqueue, channels, config, db, questions, settings
 
-CONFIRMATION_TERMS=("application submitted","application received","thank you for applying",
-                    "thanks for applying","we have received your application","successfully applied")
+ENGINE = config.ROOT / "extension" / "engine.js"
+UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36"
 
 
 def _allowed_host(url):
-    parsed=urlsplit(url)
-    host=(parsed.hostname or "").lower()
-    if parsed.scheme!="https" or not host:
+    parsed = urlsplit(url)
+    host = (parsed.hostname or "").lower()
+    if parsed.scheme != "https" or not host or channels.needs_login(url):
         return False
-    if any(host==domain or host.endswith("."+domain) for domain in RESTRICTED):
-        return False
-    allowed={domain.strip().lower() for domain in os.getenv("AUTO_APPLY_ALLOWED_HOSTS","").split(",") if domain.strip()}
-    # Exact hostname allowlist avoids unexpected submission to unrelated tenants.
-    return host in allowed
+    allowed = {d.strip().lower() for d in settings.get("AUTO_APPLY_ALLOWED_HOSTS").split(",") if d.strip()}
+    return "*" in allowed or host in allowed or any(host.endswith("." + d.lstrip("*.")) for d in allowed if d.startswith("*."))
 
 
 def _record(application_id):
-    item=db.row("""SELECT a.*,j.url,j.title,j.description,l.name,l.email,l.phone,l.location,
+    item = db.row("""SELECT a.*,j.url,j.title,j.description,l.name,l.email,l.phone,l.location,
       l.permission_to_apply,l.cv_path,l.id AS candidate_id
       FROM applications a JOIN jobs j ON j.id=a.job_id
-      JOIN learners l ON l.id=a.learner_id WHERE a.id=?""",(int(application_id),))
-    if not item:raise ValueError("Application not found")
-    if not item["permission_to_apply"]:raise ValueError("Candidate consent is required")
-    if item["status"] not in ("queued","prepared"):
-        raise ValueError("Application is not queued or prepared")
-    if not _allowed_host(item["url"]):
-        raise ValueError("Employer hostname is not explicitly allowed for autonomous submission")
+      JOIN learners l ON l.id=a.learner_id WHERE a.id=?""", (int(application_id),))
+    if not item:
+        raise ValueError("Application not found")
+    if not item["permission_to_apply"]:
+        raise ValueError("Candidate consent is required")
+    if item["status"] not in ("queued", "prepared", "applying", "needs_review"):
+        raise ValueError("Application is not queued")
+    if not _allowed_host(item.get("apply_url") or item["url"]):
+        raise ValueError("This page needs the candidate's own login; it is applied by the Chrome extension")
     return item
 
 
-def _attempt(application_id,loop_id,status,steps=0,reason="",evidence=""):
-    db.run("""INSERT INTO application_attempts(application_id,loop_id,engine,status,steps,reason,evidence,created_at)
-              VALUES(?,?,'playwright',?,?,?,?,?)""",
-           (int(application_id),loop_id,status,steps,reason[:900],evidence[:900],db.utc_now()))
-
-
-def _answer_map(learner_id):
-    return {item["normalized_question"]:item["answer"] for item in db.rows(
-        "SELECT normalized_question,answer FROM question_answers WHERE learner_id=? AND approved=1",
-        (int(learner_id),))}
-
-
 def _preferred_cv(item, loop_id=None):
-    """Respect role-specific CVs attached to the application search loop."""
+    """Loop-selected CV, then the learner's default (used when tailoring is off)."""
+    import os
     if loop_id:
-        cv=db.row("""SELECT v.path FROM loops l JOIN cv_versions v ON v.id=l.cv_version_id
-           WHERE l.id=? AND l.learner_id=?""",(int(loop_id),item["candidate_id"]))
+        cv = db.row("""SELECT v.path FROM loops l JOIN cv_versions v ON v.id=l.cv_version_id
+           WHERE l.id=? AND l.learner_id=?""", (int(loop_id), item["candidate_id"]))
     else:
-        cv=db.row("""SELECT v.path FROM loops l JOIN loop_jobs lj ON lj.loop_id=l.id
+        cv = db.row("""SELECT v.path FROM loops l JOIN loop_jobs lj ON lj.loop_id=l.id
            JOIN cv_versions v ON v.id=l.cv_version_id
            WHERE l.learner_id=? AND lj.job_id=? AND l.mode='auto'
-           ORDER BY l.id DESC LIMIT 1""",(item["candidate_id"],item["job_id"]))
+           ORDER BY l.id DESC LIMIT 1""", (item["candidate_id"], item["job_id"]))
     if cv and os.path.isfile(cv["path"]):
         return cv["path"]
-    path=item["cv_path"]
-    if path and os.path.isfile(path):
-        return path
-    versions=db.rows("SELECT path FROM cv_versions WHERE learner_id=? ORDER BY is_default DESC,id DESC",
-                     (item["candidate_id"],))
-    return next((v["path"] for v in versions if os.path.isfile(v["path"])),None)
+    if item["cv_path"] and os.path.isfile(item["cv_path"]):
+        return item["cv_path"]
+    versions = db.rows("SELECT path FROM cv_versions WHERE learner_id=? ORDER BY is_default DESC,id DESC", (item["candidate_id"],))
+    return next((v["path"] for v in versions if os.path.isfile(v["path"])), None)
 
 
-def process(application_id,loop_id=None,submit=False):
-    item=_record(application_id)
-    if submit and os.getenv("AUTO_SUBMIT_ENABLED")!="1":
-        raise ValueError("Set AUTO_SUBMIT_ENABLED=1 to explicitly allow unattended submissions")
+OPTIONS_JS = """() => [...document.querySelectorAll('[role="option"]')]
+  .filter(o => o.getBoundingClientRect().height > 0).map(o => o.innerText.trim()).filter(Boolean).slice(0, 80)"""
+
+
+def _read_options(page, selector):
+    """Open a custom dropdown with a real click and read its options."""
+    try:
+        page.click(selector, timeout=4000)
+        page.wait_for_timeout(400)
+        options = page.evaluate(OPTIONS_JS)
+        page.keyboard.press("Escape")
+        return options
+    except Exception:
+        return []
+
+
+def _trusted_fill(page, selector, value):
+    """Type into a custom dropdown and pick the matching option with real keyboard input."""
+    try:
+        page.click(selector, timeout=4000)
+        page.keyboard.press("Control+A")
+        page.keyboard.press("Backspace")
+        page.keyboard.type(value[:60], delay=15)
+        page.wait_for_timeout(600)
+        page.keyboard.press("Enter")
+        page.wait_for_timeout(250)
+    except Exception:
+        pass
+
+
+def _drive(page, context, ctx, engine_source, max_rounds=30):
+    """Loop the engine over a Playwright page until it reaches a final state."""
+    idle, steps = 0, 0
+    for _ in range(max_rounds):
+        if len(context.pages) > 1 and context.pages[-1] is not page:
+            page = context.pages[-1]
+        try:
+            page.wait_for_load_state("domcontentloaded", timeout=30000)
+        except Exception:
+            pass
+        page.wait_for_timeout(1200 + random.randint(0, 1200))
+        if channels.needs_login(page.url):
+            return {"status": "reroute", "reason": f"Continues on {channels.host_of(page.url)}, which needs the candidate's login", "steps": steps}
+        if not _allowed_host(page.url):
+            return {"status": "needs_review", "reason": f"Redirected to non-allowed host {channels.host_of(page.url)}", "steps": steps}
+        try:
+            if not page.evaluate("() => !!(window.__britEngine && window.__britEngine.version === 3)"):
+                page.add_script_tag(content=engine_source)
+            result = page.evaluate("ctx => window.__britEngine.step(ctx)", ctx)
+        except Exception as exc:  # navigation during evaluate
+            result = {"state": "navigating", "reason": str(exc)[:200]}
+        result = result or {"state": "navigating"}
+        steps += 1
+        state = result.get("state")
+        if state == "submitted":
+            return {"status": "confirmed", "evidence": result.get("evidence"), "steps": steps}
+        if state == "already_applied":
+            return {"status": "already_applied", "evidence": result.get("evidence"), "steps": steps}
+        if state == "ready":
+            return {"status": "prepared", "reason": "Filled; submission disabled", "steps": steps}
+        if state == "external":
+            page.goto(result["url"], wait_until="domcontentloaded", timeout=45000)
+            idle = 0
+            continue
+        if state == "need_options":
+            for selector in result.get("selectors", [])[:30]:
+                ctx["comboOptions"][selector] = _read_options(page, selector)
+            continue
+        if state == "trusted_fill":
+            for fill in result.get("fills", [])[:30]:
+                _trusted_fill(page, fill["selector"], fill["value"])
+            continue
+        if state in ("continue", "navigating"):
+            if result.get("clicked") == "submit":
+                ctx["afterSubmit"] = True
+            idle = 0
+            continue
+        if state == "no_form":
+            idle += 1
+            if idle >= (2 if ctx.get("afterSubmit") else 3):
+                reason = result.get("reason") or "No application form"
+                return {"status": "needs_review", "reason": reason, "steps": steps}
+            continue
+        if state in ("blocked", "login_required"):
+            return {"status": "reroute", "reason": result.get("reason") or state, "steps": steps}
+        return {"status": "needs_review", "reason": f"{state}: {result.get('reason', '')}", "unknown": result.get("unknown"), "steps": steps}
+    return {"status": "needs_review", "reason": "Too many steps without finishing", "steps": steps}
+
+
+def process(application_id, loop_id=None, submit=False):
+    item = _record(application_id)
+    if submit and not settings.enabled("AUTO_SUBMIT_ENABLED"):
+        raise ValueError("Turn on automatic submission in Settings")
     try:
         from playwright.sync_api import sync_playwright
     except ImportError as exc:
-        raise RuntimeError("Install Playwright and Chromium to enable ATS automation") from exc
-    cv_path=_preferred_cv(item,loop_id)
-    if not cv_path:
-        raise ValueError("Candidate has no uploaded/validated CV file")
-    steps=0
+        raise RuntimeError("Install Playwright and Chromium to enable server-side applications") from exc
+    if item["status"] != "applying":
+        db.run("UPDATE applications SET status='applying',claimed_at=?,updated_at=? WHERE id=?",
+               (db.utc_now(), db.utc_now(), item["id"]))
+    data = applyqueue.payload(dict(item))
+    ctx = {"profile": data["profile"], "answers": data["answers"], "cv": data["cv"], "job": data["job"],
+           "applicationId": item["id"], "submit": bool(submit), "afterSubmit": False,
+           "trusted": True, "comboOptions": {}}
+    learner_id = item["learner_id"]
+    engine_source = ENGINE.read_text(encoding="utf-8")
     try:
         with sync_playwright() as api:
-            browser=api.chromium.launch(headless=True)
-            page=browser.new_page(accept_downloads=False)
-            page.goto(item["url"],wait_until="domcontentloaded",timeout=30000)
-            # Approved entry URLs may redirect to a shared ATS, authentication
-            # provider, or an entirely unrelated domain. Recheck the actual
-            # destination before reading private candidate fields or submitting.
-            if not _allowed_host(page.url):
-                _attempt(application_id,loop_id,"blocked",reason="Redirected outside the approved employer hostname")
-                return {"status":"blocked","reason":"Redirected outside approved employer hostname","steps":0}
-            if any(x in page.title().lower() for x in ("captcha","verify you are human","sign in")):
-                _attempt(application_id,loop_id,"blocked",reason="Authentication or bot challenge on opening page")
-                return {"status":"blocked","reason":"Authentication or site challenge","steps":0}
-            values={"name":item["name"],"email":item["email"],"phone":item["phone"],"location":item["location"]}
-            name_parts=item["name"].split()
-            values["first_name"]=name_parts[0] if name_parts else ""
-            values["last_name"]=" ".join(name_parts[1:])
-            labels={
-                "name":["Full name","Your name","Applicant name"],
-                "first_name":["First name","Given name"],
-                "last_name":["Last name","Surname","Family name"],
-                "email":["Email","Email address"],
-                "phone":["Phone","Phone number","Mobile","Telephone"],
-                "location":["Current location","City"]
-            }
-            for key,examples in labels.items():
-                if not values[key]:continue
-                for label in examples:
-                    field=page.get_by_label(label,exact=True).first
-                    try:
-                        if field.count() and field.is_visible():
-                            field.fill(values[key],timeout=1000)
-                            steps+=1
-                    except Exception:
-                        continue
-            for selector,key in (('input[type="email"]',"email"),('input[type="tel"]',"phone")):
-                element=page.locator(selector).first
-                try:
-                    if element.count() and element.is_visible() and not element.input_value():
-                        element.fill(values[key],timeout=1000)
-                        steps+=1
-                except Exception:
-                    pass
-            uploader=page.locator('input[type="file"]').first
-            if uploader.count():
-                uploader.set_input_files(cv_path,timeout=5000)
-                steps+=1
-            # Fill only answers previously approved by this exact candidate.
-            answer_map=_answer_map(item["candidate_id"])
-            for field in page.locator('textarea, input[type="text"]').all()[:35]:
-                try:
-                    if not field.is_visible() or field.input_value():continue
-                    label_text=field.evaluate("e => (e.labels && e.labels[0] && e.labels[0].innerText) || e.getAttribute('aria-label') || ''")
-                    key=questions.normalize(label_text)
-                    if key in answer_map and answer_map[key]:
-                        field.fill(answer_map[key],timeout=1000)
-                        steps+=1
-                except Exception:
-                    continue
-            challenge=page.locator('iframe[src*="captcha"],iframe[src*="recaptcha"],input[name*="captcha"]').count()>0
-            if challenge:
-                _attempt(application_id,loop_id,"blocked",steps,"CAPTCHA/challenge encountered")
-                return {"status":"blocked","steps":steps,"reason":"CAPTCHA/challenge encountered"}
-            # Never guess unanswered required, custom consent, visa, or salary inputs.
-            missing=page.locator('input:required:not([type="hidden"]),textarea:required,select:required').evaluate_all("""
-              els => els.filter(e=>!e.disabled && e.getClientRects().length && !e.checkValidity())
-                .map(e => e.name || e.id || e.getAttribute('aria-label') || e.type).slice(0,12)
-            """)
-            if missing:
-                _attempt(application_id,loop_id,"needs_review",steps,"Required questions: "+", ".join(missing))
-                db.run("UPDATE applications SET status='prepared',updated_at=? WHERE id=?",(db.utc_now(),application_id))
-                return {"status":"needs_review","steps":steps,"unanswered":missing}
-            if not submit:
-                _attempt(application_id,loop_id,"prepared",steps,"Submission disabled; prefilling completed")
-                db.run("UPDATE applications SET status='prepared',updated_at=? WHERE id=?",(db.utc_now(),application_id))
-                return {"status":"prepared","steps":steps}
-            button=page.get_by_role("button",name=re.compile(r"^(submit application|apply now|submit|send application)$",re.I)).first
-            if not button.count() or not button.is_visible() or not button.is_enabled():
-                _attempt(application_id,loop_id,"needs_review",steps,"No unambiguous submit control")
-                return {"status":"needs_review","steps":steps,"reason":"Submit control not identified"}
-            if not _allowed_host(page.url):
-                _attempt(application_id,loop_id,"blocked",steps,"Application page changed to an unapproved hostname")
-                return {"status":"blocked","steps":steps,"reason":"Application page hostname changed"}
-            button.click(timeout=5000)
-            page.wait_for_timeout(2500)
-            text=(page.locator("body").inner_text(timeout=3000) or "").lower()
-            if any(term in text for term in CONFIRMATION_TERMS):
-                evidence="Employer page displayed submission confirmation"
-                db.run("UPDATE applications SET status='confirmed',confirmation=?,updated_at=? WHERE id=?",
-                       (evidence,db.utc_now(),application_id))
-                _attempt(application_id,loop_id,"confirmed",steps+1,evidence,evidence)
-                return {"status":"confirmed","steps":steps+1,"evidence":evidence}
-            # A submit was clicked, so unknown outcome: NEVER silently retry.
-            db.run("UPDATE applications SET status='prepared',notes=?,updated_at=? WHERE id=?",
-                   ("Submit clicked but no confirmation found; verify manually before retrying",db.utc_now(),application_id))
-            _attempt(application_id,loop_id,"unverified",steps+1,"Submit attempted; no receipt detected")
-            return {"status":"unverified","steps":steps+1,"reason":"Manual verification required"}
+            browser = api.chromium.launch(headless=settings.enabled("SERVER_HEADLESS"))
+            context = browser.new_context(user_agent=UA, locale="en-GB", timezone_id="Europe/London",
+                                          viewport={"width": 1366, "height": 900}, bypass_csp=True)
+            context.expose_function("__britAsk", lambda payload: questions.answer_fields(
+                learner_id, (payload or {}).get("fields") or [], data["job"]))
+            page = context.new_page()
+            page.goto(data["application"]["url"], wait_until="domcontentloaded", timeout=45000)
+            outcome = _drive(page, context, ctx, engine_source)
+            browser.close()
     except Exception as exc:
-        _attempt(application_id,loop_id,"error",steps,str(exc))
-        return {"status":"error","steps":steps,"reason":str(exc)[:250]}
+        outcome = {"status": "error", "reason": str(exc)[:300]}
+    saved = applyqueue.record(item["id"], outcome, engine="playwright")
+    return {**outcome, "result": saved["status"]}
 
 
 def process_queue(limit=4):
-    if os.getenv("AUTO_SUBMIT_ENABLED")!="1":
-        return {"processed":0,"reason":"AUTO_SUBMIT_ENABLED is not set"}
-    items=db.rows("""SELECT a.id,j.url FROM applications a JOIN jobs j ON j.id=a.job_id
-      WHERE a.status='queued' AND a.method='loop_auto'
-        AND NOT EXISTS (SELECT 1 FROM application_attempts at WHERE at.application_id=a.id)
+    if not settings.enabled("AUTO_SUBMIT_ENABLED"):
+        return {"processed": 0, "reason": "Automatic submission is turned off in Settings"}
+    applyqueue.release_stale()
+    items = db.rows("""SELECT a.id,a.learner_id,COALESCE(NULLIF(a.apply_url,''),j.url) AS url FROM applications a
+      JOIN jobs j ON j.id=a.job_id JOIN learners l ON l.id=a.learner_id
+      WHERE a.status='queued' AND a.channel IN ('server','') AND l.permission_to_apply=1
+        AND NOT EXISTS (SELECT 1 FROM application_attempts at WHERE at.application_id=a.id AND at.engine='playwright')
       ORDER BY a.id LIMIT 100""")
-    results=[]
+    daily = settings.number("DAILY_APPLY_LIMIT", 40)
+    results = []
     for item in items:
-        if len(results)>=max(0,min(int(limit),10)):break
-        if _allowed_host(item["url"]):
-            try:
-                outcome=process(item["id"],submit=True)
-            except Exception as exc:
-                # A candidate missing a CV must not prevent other candidates
-                # from being processed. A failure needs manual intervention
-                # before another autonomous submission attempt is authorised.
-                _attempt(item["id"],None,"error",reason=str(exc))
-                outcome={"status":"error","reason":str(exc)[:250]}
-            results.append({"application_id":item["id"],**outcome})
-    return {"processed":len(results),"results":results}
+        if len(results) >= max(0, min(int(limit), 10)):
+            break
+        if not _allowed_host(item["url"]):
+            db.run("UPDATE applications SET channel='extension' WHERE id=?", (item["id"],))
+            continue
+        if applyqueue.applied_today(item["learner_id"]) >= daily:
+            continue
+        try:
+            outcome = process(item["id"], submit=True)
+        except Exception as exc:
+            # One failure must not block other candidates; it is recorded and not retried here.
+            db.run("""INSERT INTO application_attempts(application_id,engine,status,reason,created_at)
+                      VALUES(?, 'playwright','error',?,?)""", (item["id"], str(exc)[:900], db.utc_now()))
+            db.run("UPDATE applications SET status='needs_review',notes=? WHERE id=? AND status IN ('queued','applying')",
+                   (str(exc)[:900], item["id"]))
+            outcome = {"status": "error", "reason": str(exc)[:250]}
+        results.append({"application_id": item["id"], **outcome})
+    return {"processed": len(results), "results": results}

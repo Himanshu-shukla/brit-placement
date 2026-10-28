@@ -1,10 +1,10 @@
-# Optional: larger image with Chromium for explicitly permitted employer sites.
+# Image with Chromium for server-side applications on company career sites.
 # Running browser automation on arbitrary/untrusted sites requires additional
 # container sandboxing; see the security notes in the README.
 FROM mcr.microsoft.com/playwright/python:v1.64.1-noble
 WORKDIR /app
 COPY . /app
-RUN python -m pip install --no-cache-dir "playwright==1.64.1" "reportlab>=4,<5" "pypdf>=5,<7" \
+RUN python -m pip install --no-cache-dir "playwright==1.64.1" "reportlab>=4,<5" "pypdf>=5,<7" "python-jobspy>=1.1,<2" \
     && useradd --create-home --uid 10001 brit \
     && mkdir -p /app/data \
     && chown -R brit:brit /app

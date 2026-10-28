@@ -41,30 +41,30 @@
     const s=state;
     if(s.tab==='overview'){
       const stat=(label,value,help)=>`<div class="stat"><label>${label}</label><strong>${value||0}</strong><small>${help}</small></div>`;
-      html = heading('Placement overview','Automate discovery. Preserve candidate consent. Track real outcomes.', action('Create a loop','adv-new-loop','teal')+action('Run matching','match'))+
-        `<div class="stats">${stat('Active loops',s.dashboard.active_loops,'Every 2 hours by default')}${stat('Discovered jobs',s.dashboard.jobs,'Across configured feeds')}${stat('Verified submissions',s.dashboard.confirmed_applications,'Confirmed by employer')}${stat('Pending applications',s.dashboard.pending_applications,'Queued or prepared')}</div>`+
+      html = heading('Placement overview','Loops search 25+ job boards, auto-apply with tailored CVs and email recruiters for each learner.', action('Create a loop','adv-new-loop','teal')+action('Search all boards now','sync'))+
+        `<div class="stats">${stat('Active loops',s.dashboard.active_loops,'Every 2 hours by default')}${stat('Discovered jobs',s.dashboard.jobs,'LinkedIn, Indeed, Glassdoor, Reed, NHS…')}${stat('Applied today',s.dashboard.applied_today,'Confirmed submissions')}${stat('Submitted (all time)',s.dashboard.confirmed_applications,'Confirmation shown')}${stat('In queue',s.dashboard.pending_applications,'Waiting for the auto-apply runner')}${stat('Need attention',s.dashboard.needs_review,'Unanswered question, login or CAPTCHA')}${stat('Recruiter emails',s.dashboard.emails_sent,'Sent with tailored CV')}</div>`+
         `<div class="cards"><div class="card"><h2>Daily operating flow</h2>`+[
-          ['01','Discover','Connect company ATS feeds; optional Reed and Adzuna keys.'],
-          ['02','Qualify','Match skills, seniority and right-to-work/sponsorship.'],
-          ['03','Prepare','Review CVs and use assisted applications in the browser.'],
-          ['04','Verify','Log submission reference, interviews and actual offers.']
+          ['01','Search','Every 2 hours loops search LinkedIn, Indeed, Glassdoor, NHS, Reed, Adzuna, remote boards and company ATS feeds; the extension adds Totaljobs, CV-Library, CWJobs and Guardian Jobs.'],
+          ['02','Match','Titles, location, seniority, salary and right-to-work / sponsorship rules.'],
+          ['03','Apply','Tailored CV per job (Groq). Easy Apply on LinkedIn/Indeed via the extension; company sites by the server browser. Screening questions answered by Groq.'],
+          ['04','Email','Recruiter email found and a personalised email sent with the CV attached.']
         ].map(x=>`<div class="flowstep"><div class="stepnum">${x[0]}</div><div><strong>${x[1]}</strong><small>${x[2]}</small></div></div>`).join('')+
-        `</div><div class="card"><h2>Quick setup</h2><p class="muted">Start by adding your 10 learners and company career feeds. All outreach requires individual review.</p><div style="height:18px"></div>`+
-        action('Add learner','add-learner','teal')+' '+action('Add company','add-company')+' '+action('Import sponsor list','import-sponsors','alt')+
-        `<div class="callout">LinkedIn and Indeed: the Chrome extension assists with form filling while the candidate reviews and submits. It does not bypass challenges or assert successful submission.</div></div></div>`;
+        `</div><div class="card"><h2>Quick setup</h2><p class="muted">1. Settings: Groq key + SMTP. 2. Add learners with full profiles. 3. Install the extension in each learner's Chrome profile, signed in to LinkedIn/Indeed. 4. Create an auto loop.</p><div style="height:18px"></div>`+
+        action('Settings','adv-open-settings','teal')+' '+action('Add learner','add-learner')+' '+action('Import sponsor list','import-sponsors','alt')+
+        `<div class="callout">Applications that hit a CAPTCHA, a login wall or a question the AI cannot answer move to “Need attention” — open them from My applications and press Retry after fixing the cause.</div></div></div>`;
     }
     if(s.tab==='learners') html=heading('Learners','Candidate-owned profiles with explicit placement consent.',action('+ Add learner','add-learner','teal'))+
-      table(['Learner','Skills','UK eligibility','Consent','CV'],s.learners,x=>`<tr><td class="primary">${esc(x.name)}<div class="sub">${esc(x.email)}</div></td><td>${esc(x.skills)}</td><td>${x.sponsorship?'Needs sponsorship':esc(x.right_to_work)}</td><td>${x.permission_to_apply?badge('granted'):badge('missing')}</td><td><button class="linkbtn" data-action="pdf" data-id="${x.id}">Download PDF</button> <button class="linkbtn" data-action="cv" data-id="${x.id}">Print view</button></td></tr>`);
+      table(['Learner','Skills','UK eligibility','Consent','CV','Profile'],s.learners,x=>`<tr><td class="primary">${esc(x.name)}<div class="sub">${esc(x.email)} · ${esc(x.phone)}</div></td><td>${esc(x.skills)}</td><td>${x.sponsorship?'Needs sponsorship':esc(x.right_to_work)}</td><td>${x.permission_to_apply?badge('granted'):badge('missing')}</td><td><button class="linkbtn" data-action="pdf" data-id="${x.id}">Download PDF</button> <button class="linkbtn" data-action="cv" data-id="${x.id}">Print view</button></td><td><button class="linkbtn" data-action="edit-learner" data-id="${x.id}">Edit profile</button></td></tr>`);
     if(s.tab==='companies') html=heading('Target companies','Connect ATS boards with their public board slugs.',action('+ Add company','add-company','teal')+action('Sync feeds','sync'))+
       table(['Employer','Source','Board identifier','Contact discovery'],s.companies,x=>`<tr><td class="primary">${esc(x.name)}<div class="sub">${esc(x.domain)}</div></td><td>${badge(x.ats)}</td><td class="code">${esc(x.ats_slug)}</td><td><button class="linkbtn" data-action="scan" data-id="${x.id}">Scan public contact page</button></td></tr>`);
     if(s.tab==='jobs') html=heading('Recent vacancies','Fresh job posts from feeds and manually captured listings.',action('Sync now','sync','teal')+action('Import jobs CSV','import-jobs')+action('+ Add job','add-job'))+
       table(['Vacancy','Company','Location','Source','Action'],s.jobs,x=>`<tr><td class="primary">${link(x.url,x.title)}</td><td>${esc(x.company_name)}</td><td>${esc(x.location)}</td><td>${badge(x.source)}</td><td><button class="linkbtn" data-action="queue-pick" data-id="${x.id}">Queue learner</button></td></tr>`);
     if(s.tab==='matches') html=heading('Role matching','Explainable scores; sponsorship checks may require human review.',action('Recalculate matches','match','teal')+action('Local AI refine top 10','ai-match','alt'))+
       table(['Candidate','Vacancy','Score','Decision','Explanation','Action'],s.matches.filter(x=>x.decision!=='excluded').slice(0,200),x=>`<tr><td class="primary">${esc(x.learner_name)}</td><td>${link(x.url,x.job_title)}<div class="sub">${esc(x.company_name)}</div></td><td class="primary">${x.score}/100</td><td>${badge(x.decision)}</td><td>${esc(x.reasons)}</td><td><button class="linkbtn" data-action="queue" data-learner="${x.learner_id}" data-job="${x.job_id}">Queue</button></td></tr>`);
-    if(s.tab==='applications') html=heading('Application pipeline','An application only counts as submitted when evidence is recorded.',action('Open extension setup','extension'))+
-      table(['Learner','Vacancy','Status','Method','Verification','Update'],s.applications,x=>`<tr><td class="primary">${esc(x.learner_name)}</td><td>${link(x.url,x.job_title)}</td><td>${badge(x.status)}</td><td>${esc(x.method)}</td><td>${esc(x.confirmation||'Not verified')}</td><td><button class="linkbtn" data-action="status" data-id="${x.id}">Change status</button></td></tr>`);
-    if(s.tab==='contacts') html=heading('Contact & outreach','Only explicitly published recruitment addresses; reviewed emails only.',action('New email draft','draft','teal'))+
-      `<div class="cards"><div class="card"><h2>Published company contacts</h2>${s.contacts.length ? s.contacts.map(c=>`<div class="flowstep"><div class="stepnum">@</div><div><strong>${esc(c.email)}</strong><small>${esc(c.company_name)} · ${link(c.source_url,'source page')}</small></div></div>`).join(''):'<p class="muted">Use Companies → Scan public contact page.</p>'}</div><div class="card"><h2>Outreach queue</h2>`+
+    if(s.tab==='applications') html=heading('Applications','Queued by loops, applied by the extension (job boards) or the server browser (company sites).',action('Apply to company sites now','run-server-queue','teal')+action('Extension setup','extension'))+
+      table(['Learner','Vacancy','Status','Applied via','Result / notes','Actions'],s.applications,x=>`<tr><td class="primary">${esc(x.learner_name)}</td><td>${link(x.apply_url||x.url,x.job_title)}<div class="sub">${esc(x.company_name||'')} · ${esc(x.source||'')}</div></td><td>${badge(x.status)}</td><td>${esc(x.channel==='extension'?'Chrome extension':x.channel==='server'?'Server browser':x.method)}</td><td>${esc(x.confirmation||x.notes||'')}</td><td><button class="linkbtn" data-action="status" data-id="${x.id}">Change status</button>${['needs_review','prepared','queued'].includes(x.status)?` <button class="linkbtn" data-action="retry-app" data-id="${x.id}">Retry</button>`:''}${x.channel==='server'&&['queued','needs_review','prepared'].includes(x.status)?` <button class="linkbtn" data-action="apply-server" data-id="${x.id}">Apply now</button>`:''}${x.cv_version_id?` <button class="linkbtn" data-action="adv-download-cv" data-id="${x.cv_version_id}">CV sent</button>`:''}</td></tr>`);
+    if(s.tab==='contacts') html=heading('Recruiter emails','Recruiter addresses found per job; personalised emails go out automatically for auto loops.',action('Find & email recruiters now','auto-outreach','teal')+action('New email draft','draft')+action('Check replies','poll-replies','alt'))+
+      `<div class="cards"><div class="card"><h2>Recruiter contacts</h2>${s.contacts.length ? s.contacts.map(c=>`<div class="flowstep"><div class="stepnum">@</div><div><strong>${esc(c.email)}</strong><small>${esc(c.name?c.name+' · ':'')}${esc(c.company_name)} · ${badge(c.confidence||c.kind)} ${/^https?:/.test(c.source_url)?link(c.source_url,'source'):''}</small></div></div>`).join(''):'<p class="muted">Contacts appear here as loops find them, or use Search jobs → Find recruiter email.</p>'}</div><div class="card"><h2>Emails</h2>`+
       (s.outreach.length?s.outreach.map(x=>`<div class="flowstep"><div class="stepnum">✉</div><div><strong>${esc(x.learner_name)} → ${esc(x.contact_email)}</strong><small>${esc(x.job_title)} · ${x.status}</small><button class="linkbtn" data-action="view-email" data-id="${x.id}">Review</button> ${x.status==='draft'?`<button class="linkbtn" data-action="edit-email" data-id="${x.id}">Edit</button> <button class="linkbtn" data-action="tailor-email" data-id="${x.id}">AI tailor</button> <button class="linkbtn" data-action="send" data-id="${x.id}">Approve & send</button>`:''}</div></div>`).join(''):'<p class="muted">No messages drafted.</p>')+
       `<div class="callout">Use verified business role inboxes. Honour opt-outs and relevant UK data-protection rules. No bulk unsolicited campaigns.</div>${action('Suppress address','suppress','alt')}</div></div>`;
     const enhanced=window.BritAdvanced?.render(s.tab,s);
@@ -91,11 +91,23 @@
   const textarea=(name,label)=>`<label>${esc(label)}<textarea name="${name}"></textarea></label>`;
   const options=(items,labelFn)=>items.map(x=>[String(x.id),labelFn(x)]);
   function submitForm(kind,fields,button='Save'){modal(kind.replace(/-/g,' '),`<form id="entry-form" data-kind="${kind}">${fields}<button class="btn teal" type="submit">${button}</button></form>`);}
+  const learnerFields=()=>input('name','Full name','text',true)+input('email','Email','email',true)+input('phone','Phone','tel',true)+input('location','Location (city, UK)','text',true,'London')+input('postcode','Postcode')+input('address','Address')+
+    input('linkedin_url','LinkedIn URL','url')+input('portfolio_url','Portfolio / GitHub URL','url')+input('skills','Skills (comma separated)','text',true,'SQL, Excel, Power BI')+textarea('summary','Professional summary')+
+    textarea('work_history','Work history (role, employer, dates, achievements)')+textarea('education','Education')+textarea('projects','Projects and achievements')+input('experience_years','Relevant experience (years)','number')+
+    input('salary_expectation','Salary expectation (£)','text',false,'28000')+input('notice_period','Notice period','text',false,'Immediately available')+textarea('extra_facts','Other facts for application questions (driving licence, languages, availability…)')+
+    select('right_to_work','UK right-to-work',[['unknown','Unknown'],['yes','Confirmed'],['no','Not currently eligible']])+'<label class="checkbox"><input type="checkbox" name="sponsorship"> Candidate needs sponsorship</label><label class="checkbox"><input type="checkbox" name="permission_to_apply"> Candidate has agreed to automatic applications and recruiter emails</label>';
   function showForm(type,payload={}) {
     const learners=options(state.learners,x=>x.name), jobs=options(state.jobs,x=>`${x.title} — ${x.company_name}`), contacts=options(state.contacts,x=>`${x.email} — ${x.company_name}`);
     switch(type){
-      case 'add-learner': return submitForm(type,input('name','Full name','text',true)+input('email','Email','email',true)+input('phone','Phone')+input('location','UK location')+input('skills','Verified skills (comma separated)','text',true,'SQL, Excel, Power BI')+textarea('summary','Professional summary')+textarea('projects','Verified portfolio work')+input('experience_years','Relevant experience (years)','number')+select('right_to_work','UK right-to-work',[['unknown','Unknown'],['yes','Confirmed'],['no','Not currently eligible']])+'<label class="checkbox"><input type="checkbox" name="sponsorship"> Candidate needs sponsorship</label><label class="checkbox"><input type="checkbox" name="permission_to_apply"> Candidate has explicitly agreed to placement applications</label>');
-      case 'add-company': return submitForm(type,input('name','Employer','text',true)+input('domain','Company domain','text',false,'example.com')+input('careers_url','Company careers/contact page URL','url',false,'https://example.com/careers')+select('ats','ATS / source',[['greenhouse','Greenhouse'],['lever','Lever'],['ashby','Ashby'],['workable','Workable (availability varies)'],['manual','Manual']])+input('ats_slug','Employer board slug (ATS boards only)'));
+      case 'add-learner': return submitForm(type,learnerFields());
+      case 'edit-learner': {
+        const learner=state.learners.find(x=>x.id===Number(payload.id));if(!learner)return;
+        submitForm(type,learnerFields()+`<input type="hidden" name="id" value="${Number(payload.id)}">`,'Save profile');
+        const form=$('#modal-body').querySelector('form');
+        for(const [name,value] of Object.entries(learner)){const el=form.elements.namedItem(name);if(!el||name==='id')continue;if(el.type==='checkbox')el.checked=!!value;else el.value=value??'';}
+        return;
+      }
+      case 'add-company': return submitForm(type,input('name','Employer','text',true)+input('domain','Company domain','text',false,'example.com')+input('careers_url','Company careers/contact page URL','url',false,'https://example.com/careers')+select('ats','ATS / source',[['greenhouse','Greenhouse'],['lever','Lever'],['ashby','Ashby'],['workable','Workable'],['smartrecruiters','SmartRecruiters'],['recruitee','Recruitee'],['personio','Personio'],['workday','Workday (tenant|wd3|site)'],['manual','Manual']])+input('ats_slug','Employer board slug (ATS boards only)'));
       case 'add-job': return submitForm(type,select('company_id','Company',options(state.companies,x=>x.name))+input('title','Position title','text',true)+input('url','Advert URL','url',true)+input('location','UK location')+textarea('description','Job description'));
       case 'queue-pick': return submitForm(type,select('learner_id','Candidate',learners)+`<input type="hidden" name="job_id" value="${Number(payload.id)}">`,'Queue application');
       case 'status': return submitForm(type,select('status','New stage',[['queued','Queued'],['prepared','Prepared'],['confirmed','Submitted — verified'],['interview','Interview'],['offer','Offer'],['hired','Hired'],['rejected','Rejected'],['withdrawn','Withdrawn']])+input('confirmation','Evidence or reference number')+textarea('notes','Notes')+`<input type="hidden" name="id" value="${Number(payload.id)}">`,'Update status');
@@ -109,7 +121,7 @@
   }
 
   async function refresh(){
-    const paths=['dashboard','learners','companies','jobs','matches','applications','contacts','outreach','loops','questions','cvs','attempts','analytics'];
+    const paths=['dashboard','learners','companies','jobs','matches','applications','contacts','outreach','loops','questions','cvs','attempts','analytics','settings','boards'];
     const values=await Promise.all(paths.map(p=>api(p)));
     paths.forEach((p,i)=>state[p]=values[i]);render();
   }
@@ -118,9 +130,22 @@
     try{
       const ctx={state,api,refresh,notice,modal,render,key};
       if(await window.BritAdvanced?.action(task,el,ctx))return;
-      if(['add-learner','add-company','add-job','queue-pick','status','draft','suppress','import-sponsors','import-jobs','edit-email'].includes(task))return showForm(task,el.dataset);
+      if(['add-learner','edit-learner','add-company','add-job','queue-pick','status','draft','suppress','import-sponsors','import-jobs','edit-email'].includes(task))return showForm(task,el.dataset);
+      if(task==='retry-app'){await api(`applications/${Number(el.dataset.id)}/retry`,'POST',{});notice('Queued again for the auto-apply runner');return refresh();}
+      if(task==='apply-server'){notice('Applying in the server browser — this can take a minute…');const data=await api(`applications/${Number(el.dataset.id)}/apply-server`,'POST',{});notice(`Result: ${data.result} — ${data.evidence||data.reason||''}`,data.result!=='confirmed');return refresh();}
+      if(task==='run-server-queue'){notice('Applying to queued company-site jobs…');const data=await api('autoapply/process-queue','POST',{limit:5});notice(`${data.processed} application(s) processed${data.reason?' — '+data.reason:''}`);return refresh();}
+      if(task==='auto-outreach'){notice('Finding recruiter emails and sending…');const data=await api('outreach/auto-run','POST',{limit:10});notice(`${data.drafted||0} drafted, ${data.sent||0} sent, ${data.no_contact||0} without a contact${data.reason?' — '+data.reason:''}${data.smtp_configured===false?' — add SMTP in Settings to send':''}`);return refresh();}
+      if(task==='poll-replies'){const data=await api('outreach/poll','POST',{});notice(`${data.replies_tracked} repl(ies) tracked`);return refresh();}
       if(task==='extension')return modal('Chrome extension','<p>Open <code>chrome://extensions</code>, enable Developer mode, click <b>Load unpacked</b> and select the project <b>extension</b> folder. Enter the local API key in its popup. Never share the key.</p>');
-      if(task==='sync') {const data=await api('sync','POST',{mode:'all'});notice(`Discovery complete: ${JSON.stringify(data).slice(0,260)}`);return refresh();}
+      if(task==='sync') {
+        const titles=[...new Set(state.loops.flatMap(x=>JSON.parse(x.titles||'[]')))];
+        const queries=titles.length?titles:[prompt('Job title to search for:','Data Analyst')||''].filter(Boolean);
+        if(!queries.length)return;
+        notice('Searching LinkedIn, Indeed, Glassdoor, NHS Jobs and other boards — this takes 1–3 minutes…');
+        await api('sync','POST',{mode:'companies'});
+        const data=await api('discover','POST',{queries,location:state.loops[0]?.location||'United Kingdom'});
+        await api('loops/run-all','POST',{});
+        notice(`Found ${data.jobs_seen} jobs: ${Object.entries(data.by_board||{}).map(([k,v])=>k+' '+v).join(', ')}${data.errors?.length?' · '+data.errors.length+' source error(s)':''}`);return refresh();}
       if(task==='match'){const data=await api('matches/run','POST',{});notice(`${data.matches_scored} matches scored`);return refresh();}
       if(task==='ai-match'){notice('Asking local Ollama for rankings; this may take a few minutes...');const data=await api('matches/ai-refine','POST',{limit:10});notice(`${data.refined} candidates reranked (review AI suggestions)`);return refresh();}
       if(task==='scan'){const data=await api('contacts/scan','POST',{company_id:Number(el.dataset.id)});notice(`Found ${data.emails.length} published recruitment addresses and ${data.contact_forms.length} contact links`);return refresh();}
@@ -171,7 +196,7 @@
     }
     values.permission_to_apply=!!e.target.elements.permission_to_apply?.checked;
     values.sponsorship=!!e.target.elements.sponsorship?.checked;
-    const endpoints={'add-learner':'learners','add-company':'companies','add-job':'jobs','queue-pick':'applications','draft':'outreach/draft','suppress':'suppressions','import-sponsors':'sponsors/import','import-jobs':'jobs/import-csv'};
+    const endpoints={'edit-learner':`learners/${Number(values.id)}/update`,'add-learner':'learners','add-company':'companies','add-job':'jobs','queue-pick':'applications','draft':'outreach/draft','suppress':'suppressions','import-sponsors':'sponsors/import','import-jobs':'jobs/import-csv'};
     try{
       if(kind==='import-sponsors'||kind==='import-jobs'){values.csv=await e.target.elements.csvfile.files[0].text();delete values.csvfile;}
       const endpoint=kind==='status'?`applications/${Number(values.id)}/status`:kind==='edit-email'?`outreach/${Number(values.id)}/edit`:endpoints[kind];

@@ -97,15 +97,16 @@ def company_sponsors(company_name, normalized_sponsors):
     return company in normalized_sponsors
 
 
-def calculate(learner, job, sponsor_names=None):
+def calculate(learner, job, sponsor_names=None, loop_titles=False, allow_senior=False):
+    """loop_titles=True when a search loop already matched the title to the learner's target roles."""
     title, description = normalize(job["title"]), normalize(job.get("description") or "")
     company_name = job.get("company_name") or ""
     reasons = []
-    if any(term in title for term in BLOCK_WORDS):
+    if not allow_senior and any(term in title for term in BLOCK_WORDS):
         return 0, "excluded", ["Senior or management position"]
-    if any(term in title for term in EXCLUDE_WORDS):
+    if not loop_titles and any(term in title for term in EXCLUDE_WORDS):
         return 0, "excluded", ["Role outside entry-level analytics"]
-    if not any(term in title for term in ROLE_WORDS):
+    if not loop_titles and not any(term in title for term in ROLE_WORDS):
         return 0, "excluded", ["Job title not within the analytics role list"]
     eligibility = str(learner.get("right_to_work", "unknown")).strip().lower()
     if eligibility == "no" and not learner.get("sponsorship"):
@@ -121,8 +122,16 @@ def calculate(learner, job, sponsor_names=None):
     required = skills_in(description + " " + title)
     common = sorted(present & required)
     missing = sorted(required - present)
+    own = [normalize(x) for x in str(learner.get("skills") or "").split(",") if len(normalize(x)) > 1]
+    advert = " " + description + " " + title + " "
+    own_hits = [x for x in own if " " + x + " " in advert]
     if required:
         score = int(45 + 50 * len(common) / len(required))
+    elif loop_titles:
+        # Title already matches the learner's target roles; reward their own skills found in the advert.
+        score = min(92, 62 + 6 * len(own_hits))
+        if own_hits:
+            reasons.append("Advert mentions: " + ", ".join(own_hits[:8]))
     else:
         score = 58
     if "junior" in title or "graduate" in title or "entry level" in title:
@@ -131,7 +140,7 @@ def calculate(learner, job, sponsor_names=None):
         reasons.append("Matched: " + ", ".join(common))
     if missing:
         reasons.append("Not demonstrated: " + ", ".join(missing))
-    if not required:
+    if not required and not loop_titles:
         reasons.append("No explicit skills extracted; manual review advised")
     score = min(score, 100)
     return score, "matched" if score >= 60 else "review", reasons

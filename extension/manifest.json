@@ -1,19 +1,24 @@
 {
   "manifest_version": 3,
-  "name": "Brit Placement Assistant",
-  "version": "1.0.0",
-  "description": "Connect to Placement OS for reviewed job applications and candidate form assistance.",
+  "name": "Brit Placement Auto-Apply",
+  "version": "2.0.0",
+  "description": "Auto-apply to LinkedIn, Indeed, Glassdoor, UK job boards and company career sites from Placement OS loops.",
   "permissions": [
     "activeTab",
     "scripting",
     "storage",
-    "clipboardWrite"
+    "tabs",
+    "alarms",
+    "debugger"
   ],
   "host_permissions": [
-    "http://127.0.0.1:8770/*"
+    "<all_urls>"
   ],
+  "background": {
+    "service_worker": "background.js"
+  },
   "action": {
     "default_popup": "popup.html",
-    "default_title": "Brit Placement Assistant"
+    "default_title": "Brit Placement Auto-Apply"
   }
 }

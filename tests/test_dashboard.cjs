@@ -14,10 +14,11 @@ const state={
          job_title:'Junior Data Analyst',company_name:'Example Ltd',url:job.url,score:88,decision:'matched',reasons:'SQL Power BI'}],
   applications:[{id:1,learner_name:'Amina',job_title:'Junior Data Analyst',status:'queued',updated_at:'2026-10-27',method:'loop_auto'}],
   cvs:[],questions:[],attempts:[],searchFilters:{},matchFilter:{},dashboard:{active_loops:1,jobs:1,matches:1,applications:1},
-  analytics:{by_status:[],by_source:[],by_learner:[]},loopJobs:[],selectedLoopId:0,selectedJobId:0
+  analytics:{by_status:[],by_source:[],by_learner:[]},loopJobs:[],selectedLoopId:0,selectedJobId:0,
+  settings:{GROQ_API_KEY:'',AUTO_SUBMIT_ENABLED:'1'},boards:[{id:'linkedin',label:'LinkedIn',kind:'search',note:''}]
 };
 const expected={loops:'My search loops',board:'Application board',questions:'Screening questions',
-  cvcheck:'CV checker',analytics:'Placement analytics',jobs:'Search jobs',matches:'All matches'};
+  cvcheck:'CV checker',analytics:'Placement analytics',jobs:'Search jobs',matches:'All matches',settings:'Settings'};
 for(const [tab,heading] of Object.entries(expected)){
   const html=ui.render(tab,state);
   assert.equal(typeof html,'string');
@@ -25,4 +26,4 @@ for(const [tab,heading] of Object.entries(expected)){
   assert.ok(html.length>200,`${tab}: unexpectedly short HTML`);
 }
 assert.equal(ui.render('overview',state),null);
-console.log('PASS: 7 advanced dashboard screens render against fixture state');
+console.log('PASS: 8 advanced dashboard screens render against fixture state');

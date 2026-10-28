@@ -6,7 +6,6 @@ $env:PLAYWRIGHT_BROWSERS_PATH = Join-Path $PSScriptRoot 'data\playwright'
 $env:PLACEMENT_HOST = '127.0.0.1'
 $env:PLACEMENT_PORT = '8770'
 $env:PLACEMENT_SCHEDULER = '1'
-if (-not $env:OLLAMA_MODEL) { $env:OLLAMA_MODEL = 'qwen3.5:4b' }
 New-Item -ItemType Directory -Path (Join-Path $PSScriptRoot 'data') -Force | Out-Null
 $listener = Get-NetTCPConnection -LocalPort 8770 -State Listen -ErrorAction SilentlyContinue
 if ($listener) {

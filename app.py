@@ -14,7 +14,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from placement import config, db, sources, contacts, matching, outreach, cv, ai, loops, cv_files, questions, autoapply
+from placement import (config, db, sources, contacts, matching, outreach, cv, ai, loops, cv_files, questions,
+                       autoapply, settings, applyqueue, recruiters, tailor)
 
 STATIC = config.ROOT / "static"
 TOKEN_FILE = config.DATA_DIR / "admin-token.txt"
@@ -122,9 +123,11 @@ class Handler(BaseHTTPRequestHandler):
                          FROM matches JOIN learners ON learners.id=matches.learner_id
                          JOIN jobs ON jobs.id=matches.job_id LEFT JOIN companies ON companies.id=jobs.company_id
                          ORDER BY matches.score DESC LIMIT 500""",
-                "/api/applications": """SELECT applications.*,learners.name AS learner_name,jobs.title AS job_title,jobs.url AS url
+                "/api/applications": """SELECT applications.*,learners.name AS learner_name,jobs.title AS job_title,jobs.url AS url,
+                         jobs.source AS source,companies.name AS company_name
                          FROM applications JOIN learners ON learners.id=applications.learner_id
-                         JOIN jobs ON jobs.id=applications.job_id ORDER BY applications.updated_at DESC LIMIT 500""",
+                         JOIN jobs ON jobs.id=applications.job_id LEFT JOIN companies ON companies.id=jobs.company_id
+                         ORDER BY applications.updated_at DESC LIMIT 500""",
                 "/api/outreach": """SELECT outreach.*,contacts.email AS contact_email,learners.name AS learner_name,
                          jobs.title AS job_title FROM outreach JOIN contacts ON contacts.id=outreach.contact_id
                          JOIN learners ON learners.id=outreach.learner_id JOIN jobs ON jobs.id=outreach.job_id ORDER BY outreach.id DESC LIMIT 500""",
@@ -160,6 +163,12 @@ class Handler(BaseHTTPRequestHandler):
                    FROM learners LEFT JOIN applications ON applications.learner_id=learners.id GROUP BY learners.id""")
                 return self._json(200,{"by_status":by_status,"by_source":by_source,"by_learner":by_learner,
                                        "summary":db.summary()})
+            if path == "/api/settings":
+                return self._json(200, settings.public())
+            if path == "/api/boards":
+                return self._json(200, [{"id": k, "label": v[0], "kind": v[1], "note": v[2]} for k, v in sources.BOARDS.items()])
+            if path == "/api/extension/search-tasks":
+                return self._json(200, sources.search_tasks())
             if path == "/api/scheduler/status":
                 return self._json(200,{"enabled":os.getenv("PLACEMENT_SCHEDULER","1")!="0",
                   "due":db.rows("SELECT id,name,last_run_at,next_run_at,last_error,active FROM loops ORDER BY id")})
@@ -210,6 +219,41 @@ class Handler(BaseHTTPRequestHandler):
             self._json(500, {"error": "Internal error; check event log"})
 
     def _post(self, path, data):
+        if path == "/api/settings":
+            return self._json(200, settings.update(data))
+        if path == "/api/settings/test-ai":
+            return self._json(200, ai.test_connection())
+        if path == "/api/settings/test-smtp":
+            return self._json(200, outreach.test_smtp())
+        if path == "/api/questions/answer":
+            return self._json(200, applyqueue.answer(data))
+        if path == "/api/extension/next":
+            return self._json(200, applyqueue.next_for_extension(int(data["learner_id"]), data.get("include_server", True) is not False))
+        if path == "/api/extension/result":
+            return self._json(200, applyqueue.record(int(data["application_id"]), data))
+        if path == "/api/extension/apply-now":
+            return self._json(200, applyqueue.manual(int(data["learner_id"]), data.get("job") or {}))
+        if path == "/api/jobs/harvest":
+            return self._json(200, sources.harvest(data))
+        if path == "/api/discover":
+            titles = data.get("queries") or [data.get("query") or "data analyst"]
+            return self._json(200, sources.search(titles if isinstance(titles, list) else [str(titles)],
+                                                  str(data.get("location") or "United Kingdom"), data.get("boards") or []))
+        if path == "/api/loops/run-all":
+            return self._json(200, loops.run_all())
+        if path == "/api/recruiters/find":
+            return self._json(200, recruiters.find_for_job(int(data["job_id"])))
+        if path == "/api/outreach/auto-run":
+            return self._json(200, outreach.process_auto(int(data.get("limit", 10))))
+        if path == "/api/cvs/tailor":
+            version = tailor.for_job(int(data["learner_id"]), int(data["job_id"]), force=data.get("force") is True)
+            return self._json(200, {k: version[k] for k in ("id", "learner_id", "label", "filename", "mime_type", "created_at")})
+        if path.startswith("/api/learners/") and path.endswith("/update"):
+            return self._json(200, db.update_learner(int(path.split("/")[3]), data))
+        if path.startswith("/api/applications/") and path.endswith("/retry"):
+            return self._json(200, applyqueue.retry(int(path.split("/")[3])))
+        if path.startswith("/api/applications/") and path.endswith("/apply-server"):
+            return self._json(200, autoapply.process(int(path.split("/")[3]), submit=True))
         if path == "/api/loops":
             return self._json(201,loops.create(data))
         if path.startswith("/api/loops/"):
@@ -329,7 +373,7 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith("/api/applications/") and path.endswith("/status"):
             application_id = int(path.split("/")[3])
             status = str(data.get("status", "")).lower()
-            if status not in ("queued", "prepared", "confirmed", "interview", "offer", "hired", "rejected", "withdrawn"):
+            if status not in ("queued", "prepared", "needs_review", "confirmed", "interview", "offer", "hired", "rejected", "withdrawn"):
                 raise ValueError("Invalid status")
             current = db.row("SELECT * FROM applications WHERE id=?", (application_id,))
             if not current:
@@ -383,7 +427,7 @@ def seed_demo():
 
 def main():
     parser = argparse.ArgumentParser(description="Brit Institute Placement OS")
-    parser.add_argument("command", choices=["serve", "sync", "match", "sync-sponsors", "poll-replies", "seed-demo", "token", "run-loops", "autoapply-queue"])
+    parser.add_argument("command", choices=["serve", "sync", "match", "sync-sponsors", "poll-replies", "seed-demo", "token", "run-loops", "autoapply-queue", "outreach"])
     args = parser.parse_args()
     db.initialize()
     token = admin_token()
@@ -393,6 +437,8 @@ def main():
         seed_demo()
     elif args.command == "sync":
         print(json.dumps({"employers":sources.sync_companies(),"aggregators":sources.sync_aggregators()},indent=2))
+    elif args.command == "outreach":
+        print(json.dumps(outreach.process_auto(),indent=2))
     elif args.command == "match":
         print(json.dumps(matching.match_all(),indent=2))
     elif args.command == "sync-sponsors":
@@ -412,12 +458,12 @@ def main():
             # Initial tick is deliberately delayed; avoids network calls at login.
             while not stop_scheduler.wait(120):
                 if os.getenv("PLACEMENT_SCHEDULER","1")=="0":continue
-                try:
-                    result=loops.tick(discover=True)
-                    if result.get("due") and os.getenv("AUTO_SUBMIT_ENABLED")=="1":
-                        autoapply.process_queue()
-                except Exception as exc:
-                    db.log_event("scheduler_error",{"error":str(exc)[:300]})
+                for name,task in (("loops",lambda:loops.tick(discover=True)),("apply",autoapply.process_queue),
+                                  ("email",outreach.process_auto)):
+                    try:
+                        task()
+                    except Exception as exc:
+                        db.log_event("scheduler_error",{"task":name,"error":str(exc)[:300]})
         scheduler=threading.Thread(target=recurring,daemon=True,name="placement-scheduler")
         scheduler.start()
         try:

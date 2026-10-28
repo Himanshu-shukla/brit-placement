@@ -1,0 +1,40 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Data Analyst | Example Ltd</title>
+<style>.dialog{position:fixed;inset:40px;background:#fff;border:1px solid #333;padding:20px;overflow:auto}
+.hidden-file{display:none}.sr{position:absolute;opacity:0;width:1px;height:1px}</style></head><body>
+<header><nav><input aria-label="Search" role="combobox"></nav></header>
+<main><div class="top-card"><h1>Data Analyst</h1><a href="#">Example Ltd</a>
+<button id="easy" aria-label="Easy Apply to Data Analyst at Example Ltd"><span>Easy Apply</span></button></div>
+<section><h2>About the job</h2><p>We need SQL and Excel skills.</p></section></main>
+<script>
+const steps=[
+ `<h2>Contact info</h2>
+  <label for="e">Email address</label><select id="e" required><option>Select an option</option><option selected>amina@example.net</option></select>
+  <label for="cc">Phone country code</label><select id="cc"><option selected>United Kingdom (+44)</option></select>
+  <label for="p">Mobile phone number</label><input id="p" required>`,
+ `<h2>Resume</h2><p>Upload resume</p><label for="up" class="artdeco-button">Upload resume</label>
+  <input id="up" class="hidden-file" type="file" accept=".pdf,.docx" name="file">`,
+ `<h2>Additional questions</h2>
+  <fieldset data-test-form-builder-radio-button-form-component><legend><span>Do you have a valid UK driving licence?</span></legend>
+   <input class="sr" type="radio" id="dy" name="drive" value="Yes"><label for="dy">Yes</label>
+   <input class="sr" type="radio" id="dn" name="drive" value="No"><label for="dn">No</label></fieldset>
+  <label for="y">How many years of work experience do you have with Excel?</label><input id="y" required>`,
+ `<h2>Review your application</h2><p>Review before submitting.</p>`
+];
+let index=0;const answers={};
+function draw(){
+  const d=document.getElementById('dlg');
+  const last=index===steps.length-1;
+  d.innerHTML='<div>Apply to Example Ltd</div>'+steps[index]+
+   `<button id="dismiss" aria-label="Dismiss">x</button>`+
+   (index===2?`<button id="go" aria-label="Review your application">Review</button>`:
+    last?`<button id="go" aria-label="Submit application">Submit application</button>`:`<button id="go" aria-label="Continue to next step">Next</button>`);
+  document.getElementById('go').onclick=()=>{
+    if(index===0){if(!document.getElementById('p').value)return;answers.phone=document.getElementById('p').value}
+    if(index===1){const f=document.getElementById('up').files[0];if(!f)return;answers.resume=f.name}
+    if(index===2){const r=document.querySelector('input[name=drive]:checked');const y=document.getElementById('y').value;if(!r||!/^\d+$/.test(y))return;answers.drive=r.value;answers.years=y}
+    if(last){fetch('/record',{method:'POST',body:JSON.stringify(answers)}).then(()=>{d.innerHTML='<h2>Your application was sent to Example Ltd</h2><button>Done</button>'});return}
+    index++;draw();
+  };
+}
+document.getElementById('easy').onclick=()=>{const d=document.createElement('div');d.id='dlg';d.className='dialog';d.setAttribute('role','dialog');document.body.appendChild(d);draw()};
+</script></body></html>

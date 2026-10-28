@@ -20,7 +20,38 @@
     if(tab==='analytics')return renderAnalytics(state);
     if(tab==='jobs')return renderSearch(state);
     if(tab==='matches')return renderMatches(state);
+    if(tab==='settings')return renderSettings(state);
     return null;
+  }
+
+  const SETTINGS=[
+    ['AI (Groq)','Screening answers, CV tailoring and recruiter emails.',[
+      ['GROQ_API_KEY','Groq API key','password','gsk_…'],['GROQ_MODEL','Groq model','text','llama-3.3-70b-versatile']]],
+    ['Automatic applications','Daily cap per learner and random pause between applications keep accounts safe.',[
+      ['AUTO_SUBMIT_ENABLED','Submit applications automatically','bool'],['TAILOR_CV','Tailor the CV for every job','bool'],
+      ['AI_ANSWERS_AUTO_APPROVE','Reuse AI answers automatically','bool'],['DAILY_APPLY_LIMIT','Applications per learner per day','number','40'],
+      ['APPLY_DELAY_MIN_SECONDS','Min pause between applications (s)','number','45'],['APPLY_DELAY_MAX_SECONDS','Max pause (s)','number','120'],
+      ['AUTO_APPLY_ALLOWED_HOSTS','Company sites the server may apply on (* = all)','text','*'],['SERVER_HEADLESS','Server browser hidden','bool']]],
+    ['Recruiter emails (SMTP)','Gmail: smtp.gmail.com, port 465, and a Google app password.',[
+      ['AUTO_EMAIL_ENABLED','Email recruiters automatically','bool'],['EMAIL_GUESSING','Find emails from name patterns / MX','bool'],
+      ['DAILY_EMAIL_LIMIT','Emails per learner per day','number','25'],['SMTP_HOST','SMTP host','text','smtp.gmail.com'],
+      ['SMTP_PORT','SMTP port (465 SSL / 587 STARTTLS)','number','465'],['SMTP_USERNAME','SMTP username','text'],
+      ['SMTP_PASSWORD','SMTP password / app password','password'],['SMTP_FROM','From address','email'],['SMTP_FROM_NAME','Sender name for manual emails','text'],
+      ['IMAP_HOST','IMAP host (reply tracking)','text','imap.gmail.com'],['IMAP_USERNAME','IMAP username','text'],['IMAP_PASSWORD','IMAP password','password']]],
+    ['Job boards','LinkedIn, Indeed, Glassdoor, NHS Jobs and remote boards need no key.',[
+      ['REED_API_KEY','Reed API key','password'],['ADZUNA_APP_ID','Adzuna app ID','text'],['ADZUNA_APP_KEY','Adzuna app key','password'],
+      ['JOOBLE_API_KEY','Jooble API key','password'],['JOBSPY_RESULTS','Results per board per search','number','30'],['DISCOVERY_HOURS_OLD','Only jobs posted within (hours)','number','72']]]
+  ];
+
+  function renderSettings(s){
+    const values=s.settings&&!Array.isArray(s.settings)?s.settings:{};
+    const field=([name,labelText,type,placeholder])=>type==='bool'
+      ?`<label class="checkbox"><input type="checkbox" name="${name}" ${['1','true','on','yes'].includes(String(values[name]||'').toLowerCase())?'checked':''}> ${esc(labelText)}</label>`
+      :`<label>${esc(labelText)}<input name="${name}" type="${type==='password'?'password':type}" value="${esc(values[name]||'')}" placeholder="${esc(placeholder||'')}" autocomplete="off"></label>`;
+    return head('Settings','Keys and limits for search, auto-apply, AI and recruiter emails. Stored privately in data/settings.json.',
+        task('Save settings','adv-settings-save','','teal')+task('Test Groq','adv-test-ai')+task('Send SMTP test','adv-test-smtp'))+
+      `<form id="settings-form">`+SETTINGS.map(([title,help,fields])=>`<div class="card settings-card"><h2>${esc(title)}</h2><p class="muted">${esc(help)}</p><div class="field-grid">${fields.map(field).join('')}</div></div>`).join('')+
+      `</form><div class="callout">Install the Chrome extension in each learner's Chrome profile, sign in to LinkedIn and Indeed there, choose the learner in the popup and switch on “Auto-apply to queued jobs”.</div>`;
   }
 
   function renderLoops(s){
@@ -30,7 +61,7 @@
       const names=JSON.parse(x.titles||'[]');const boards=JSON.parse(x.boards||'[]');
       return `<article class="loop-card"><div class="rowlike"><div><h2>${esc(x.name)}</h2><p class="meta">${esc(x.learner_name)} · ${esc(x.location)}</p></div>${statusPill(x.active?'active':'paused')}</div>
         <div class="tag-row">${names.map(n=>`<span class="tag">${esc(n)}</span>`).join('')}</div>
-        <p class="muted-line">${esc(x.mode==='auto'?'Auto queue + permitted employer apply':'Manual review')} · Every ${x.frequency_minutes} minutes</p>
+        <p class="muted-line">${esc(x.mode==='auto'?'Auto-apply'+(x.tailor_cv?' · tailored CV':'')+(x.auto_email?' · recruiter emails':''):'Review matches manually')} · Every ${x.frequency_minutes} minutes</p>
         <p class="muted-line">Sources: ${esc(boards.length?boards.join(', '):'All configured sources')}</p>
         <div style="margin:12px 0"><b>${x.job_count||0}</b> matches · <b>${x.run_count}</b> cycles completed</div>
         ${x.last_error?`<div class="inline-alert">${esc(x.last_error)}</div>`:''}
@@ -51,7 +82,7 @@
   }
 
   function renderBoard(s){
-    const lanes=[['Saved',a=>['queued','prepared'].includes(a.status)],['Applied',a=>a.status==='confirmed'],
+    const lanes=[['Saved',a=>['queued','prepared','applying','needs_review'].includes(a.status)],['Applied',a=>a.status==='confirmed'],
       ['Screened',a=>a.status==='interview'],['Offer received',a=>a.status==='offer'],['Placed',a=>a.status==='hired']];
     const board=lanes.map(([name,selector])=>{
       const list=s.applications.filter(selector);
@@ -124,7 +155,7 @@
     `<div class="filter-actions">${task('Reset','adv-search-reset','','alt')}${task('Apply filters','adv-search','','teal')}</div></section>`+
     `<h2 class="subheading">${results.length} search results</h2><div class="split-view"><div class="results">`+
     results.map(x=>`<button class="job-result ${selected?.id===x.id?'selected':''}" data-action="adv-job-select" data-id="${x.id}"><strong>${esc(x.title)}</strong><small>${esc(x.company_name||'Employer')} · ${esc(x.location)}</small><div class="tag-row">${label(x.source)}</div></button>`).join('')+
-    `</div><article class="job-details">${selected?`<h2>${esc(selected.title)}</h2><p class="muted">${esc(selected.company_name)} · ${esc(selected.location)}</p><div style="margin:16px 0">${links(selected.url,'Open original posting')} ${task('Queue candidate','queue-pick',`data-id="${selected.id}"`,'teal')}</div><div class="description">${esc(selected.description||'Description not available from this source')}</div>`:'Select a job to see its description.'}</article></div>`;
+    `</div><article class="job-details">${selected?`<h2>${esc(selected.title)}</h2><p class="muted">${esc(selected.company_name)} · ${esc(selected.location)}</p><div style="margin:16px 0">${links(selected.url,'Open original posting')} ${task('Queue candidate','queue-pick',`data-id="${selected.id}"`,'teal')} ${task('Find recruiter email','adv-find-recruiter',`data-id="${selected.id}"`)} ${task('Tailor CV','adv-tailor',`data-id="${selected.id}"`,'alt')}</div><div class="description">${esc(selected.description||'Description not available from this source')}</div>`:'Select a job to see its description.'}</article></div>`;
   }
 
   function renderMatches(s){
@@ -138,7 +169,7 @@
   }
 
   function openWizard(ctx){
-    wizard={step:0,data:{mode:'review',frequency_minutes:120,min_score:60}};
+    wizard={step:0,data:{mode:'auto',frequency_minutes:120,min_score:60,auto_email:true,tailor_cv:true,boards:[]}};
     ctx.modal('Create a new search loop','<div id="loop-wizard"></div>');
     document.querySelector('#modal').classList.add('wide-dialog');
     drawWizard(ctx);
@@ -148,7 +179,8 @@
     const steps=['Search info','Email template','Settings','Review'];
     const s=ctx.state,d=wizard.data,n=wizard.step;
     const progress=`<div class="wizard-progress">${steps.map((x,i)=>`<div class="wizard-step ${i<=n?'on':''}">${i+1}. ${x}</div>`).join('')}</div>`;
-    const sources=['All sources','greenhouse','lever','ashby','workable','reed','adzuna','linkedin','indeed'];
+    const boards=Array.isArray(s.boards)?s.boards:[];
+    const chosen=new Set(Array.isArray(d.boards)?d.boards:[]);
     let fields='';
     if(n===0){
       fields=`<div class="field-grid">${choices('learner_id','Choose learner',s.learners.map(x=>[x.id,x.name]))}${item('name','Loop name','text','Junior Analytics — London')}
@@ -158,18 +190,21 @@
         ${choices('job_type','Job type',[['full_time','Full-time'],['part_time','Part-time'],['contract','Contract'],['all','All']])}
         <label class="checkbox"><input type="checkbox" name="remote_only"> Remote roles only</label>
         <label class="checkbox"><input type="checkbox" name="hybrid_only"> Hybrid roles only</label>
-        <div class="full">${choices('boards','Job sources',[['','All configured sources'],...sources.slice(1).map(x=>[x,x])])}</div>
+        <div class="full"><label>Job boards (none ticked = all)</label><div class="board-grid">${boards.map(b=>`<label class="checkbox" title="${esc(b.note)}"><input type="checkbox" data-board="${esc(b.id)}" ${chosen.has(b.id)?'checked':''}> ${esc(b.label)}</label>`).join('')}</div></div>
         ${item('min_salary','Minimum annual salary (£)','number','25000')}${item('industries','Industries (optional)','text','Health, Retail, Finance')}
         ${choices('cv_version_id','CV version',[['','Default learner CV'],...s.cvs.map(x=>[x.id,`${x.label} — ${s.learners.find(l=>l.id===x.learner_id)?.name||''}`])])}</div>`;
-    }else if(n===1){fields=`<p class="muted">Templates are saved with this search. Email sending still requires candidate consent and explicit review.</p>${ta('email_template','Recruiter email template')}`;
-    }else if(n===2){fields=`<div class="field-grid">${choices('mode','Application automation',[['review','Manual / review'],['auto','Auto-queue; submit only to permitted employer sites']])}
+    }else if(n===1){fields=`<p class="muted">After applying, the loop finds the recruiter's email and sends a personalised email with the tailored CV attached. Groq personalises it in this style. Placeholders: {first_name} {job_title} {company} {skills} {candidate_name} {candidate_phone}</p>${ta('email_template','Recruiter email template (blank = default)')}
+      <label class="checkbox"><input type="checkbox" name="auto_email"> Email recruiters automatically for this loop</label>`;
+    }else if(n===2){fields=`<div class="field-grid">${choices('mode','Application mode',[['auto','Auto-apply (LoopCV style)'],['review','Review matches manually']])}
         ${choices('frequency_minutes','Search frequency',[['120','Every 2 hours'],['240','Every 4 hours'],['720','Every 12 hours'],['1440','Daily']])}
         ${item('min_score','Minimum match score','number','60')}${item('excluded_companies','Exclude companies','text','Employer A, Employer B')}
-        <div class="full"><div class="inline-alert">Auto mode never overrides consent, sponsorship checks, employer permissions or unverified screening answers. LinkedIn/Indeed use assisted review.</div></div></div>`;
+        <label class="checkbox"><input type="checkbox" name="tailor_cv"> Tailor the CV to every job</label>
+        <div class="full"><div class="inline-alert">Auto mode applies to every match above the score: Easy Apply on LinkedIn/Indeed/Glassdoor and UK boards through the learner's Chrome extension, company career sites through the server browser. Sponsorship rules still apply.</div></div></div>`;
     }else{fields=`<h2>Ready to create this loop</h2><p><strong>Learner:</strong> ${esc(s.learners.find(x=>x.id===Number(d.learner_id))?.name||'')}</p>
       <p><strong>Titles:</strong> ${esc(d.titles)}</p><p><strong>Location:</strong> ${esc(d.location||'United Kingdom')}</p>
       <p><strong>Mode:</strong> ${esc(d.mode||'review')}</p><p><strong>Frequency:</strong> every ${Number(d.frequency_minutes)||120} min</p>
-      <div class="callout">The loop will be saved and immediately run against the jobs already discovered. Live API discovery can be scheduled separately.</div>`;}
+      <p><strong>Boards:</strong> ${esc((d.boards||[]).join(', ')||'All')}</p><p><strong>Tailored CV:</strong> ${d.tailor_cv?'Yes':'No'} · <strong>Recruiter emails:</strong> ${d.auto_email?'Yes':'No'}</p>
+      <div class="callout">Saving searches the selected boards now (1–3 minutes), then every ${Number(d.frequency_minutes)||120} minutes.</div>`;}
     const back=n>0?task('← Back','adv-wizard-back','','alt'):'';
     const next=task(n===3?'Save and run loop':'Next →',n===3?'adv-wizard-save':'adv-wizard-next','','teal');
     document.querySelector('#loop-wizard').innerHTML=progress+`<div class="wizard-panel"><form id="wizard-fields">${fields}</form><div class="wizard-actions">${back}${next}</div></div>`;
@@ -186,11 +221,10 @@
     const form=document.querySelector('#wizard-fields');
     if(!form)return;
     const entries=Object.fromEntries(new FormData(form));
-    for(const checkbox of form.querySelectorAll('input[type="checkbox"]'))entries[checkbox.name]=checkbox.checked;
+    for(const checkbox of form.querySelectorAll('input[type="checkbox"][name]'))entries[checkbox.name]=checkbox.checked;
+    const boardBoxes=form.querySelectorAll('input[data-board]');
+    if(boardBoxes.length)entries.boards=[...boardBoxes].filter(x=>x.checked).map(x=>x.dataset.board);
     Object.assign(wizard.data,entries);
-    if(wizard.data.boards && typeof wizard.data.boards==='string'){
-      wizard.data.boards=wizard.data.boards?[wizard.data.boards]:[];
-    }
   }
 
   function presentForm(kind,ctx,payload={}){
@@ -245,6 +279,21 @@
     if(!name.startsWith('adv-'))return false;
     try{
       if(name==='adv-new-loop'){openWizard(ctx);return true;}
+      if(name==='adv-open-settings'){s.tab='settings';ctx.render();return true;}
+      if(name==='adv-settings-save'){
+        const form=document.querySelector('#settings-form');const values={};
+        for(const el of form.querySelectorAll('input[name]'))values[el.name]=el.type==='checkbox'?(el.checked?'1':'0'):el.value;
+        s.settings=await api('settings','POST',values);ctx.notice('Settings saved');ctx.render();return true;
+      }
+      if(name==='adv-test-ai'){ctx.notice('Testing Groq…');const r=await api('settings/test-ai','POST',{});ctx.notice(`Groq OK · model ${r.model}${r.model_available?'':' (not in your model list — pick one of: '+r.models.slice(0,6).join(', ')+')'}`,!r.model_available);return true;}
+      if(name==='adv-test-smtp'){const r=await api('settings/test-smtp','POST',{});ctx.notice(`Test email sent to ${r.sent_to}`);return true;}
+      if(name==='adv-find-recruiter'){ctx.notice('Looking for the recruiter email…');const r=await api('recruiters/find','POST',{job_id:Number(el.dataset.id)});
+        ctx.notice(r.length?`Found: ${r.map(c=>c.email+' ('+(c.confidence||c.kind)+')').join(', ')}`:'No recruiter email found for this employer',!r.length);await refresh();return true;}
+      if(name==='adv-tailor'){
+        const learner=s.learners.length===1?s.learners[0].id:Number(prompt('Learner ID to tailor for: '+s.learners.map(l=>l.id+' = '+l.name).join(', ')));
+        if(!learner)return true;ctx.notice('Tailoring CV with Groq…');
+        const r=await api('cvs/tailor','POST',{learner_id:learner,job_id:Number(el.dataset.id),force:true});
+        ctx.notice(`Created ${r.label}`);await refresh();s.tab='cvcheck';ctx.render();return true;}
       if(name==='adv-wizard-back'){captureWizard();wizard.step=Math.max(0,wizard.step-1);drawWizard(ctx);return true;}
       if(name==='adv-wizard-next'){
         const form=document.querySelector('#wizard-fields');
@@ -257,12 +306,14 @@
         captureWizard();
         const created=await api('loops','POST',wizard.data);
         document.querySelector('#modal').close();document.querySelector('#modal').classList.remove('wide-dialog');
-        const run=await api(`loops/${created.id}/run`,'POST',{discover:false});
+        ctx.notice('Loop saved — searching job boards now (1–3 minutes)…');
+        const run=await api(`loops/${created.id}/run`,'POST',{discover:true});
         s.tab='loops';ctx.notice(`Loop created; ${run.matched} matched jobs and ${run.queued} queued applications`);
         await refresh();return true;
       }
       if(name==='adv-run-loop'){
-        const x=await api(`loops/${Number(el.dataset.id)}/run`,'POST',{discover:false});
+        ctx.notice('Searching job boards for this loop…');
+        const x=await api(`loops/${Number(el.dataset.id)}/run`,'POST',{discover:true});
         ctx.notice(`Cycle complete: ${x.matched} matches, ${x.review} reviews, ${x.queued} new applications`);
         await refresh();return true;
       }

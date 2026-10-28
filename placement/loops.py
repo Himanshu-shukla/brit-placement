@@ -5,11 +5,10 @@ applications are uniquely keyed to prevent recurring searches from spamming.
 """
 
 import json
-import os
 import threading
 from datetime import datetime, timedelta, timezone
 
-from . import db, matching, sources
+from . import applyqueue, db, matching, sources
 
 _tick_lock = threading.Lock()
 
@@ -86,8 +85,14 @@ def create(data):
           _text(data.get("excluded_companies"),1000),min_score,mode,int(cv_version_id) if cv_version_id else None,
           _text(data.get("email_template"),2000),frequency,int(bool(data.get("active",True))),db.utc_now()))
         loop_id=cursor.lastrowid
+        conn.execute("UPDATE loops SET auto_email=?,tailor_cv=? WHERE id=?",
+                     (int(_flag(data.get("auto_email",True))),int(_flag(data.get("tailor_cv",True))),loop_id))
     db.log_event("loop_created",{"loop_id":loop_id,"learner_id":learner_id,"mode":mode})
     return db.row("SELECT * FROM loops WHERE id=?",(loop_id,))
+
+
+def _flag(value):
+    return value in (True,1,"1","true","on","yes")
 
 
 def update(loop_id, data):
@@ -105,20 +110,31 @@ def update(loop_id, data):
         raise ValueError("Invalid mode, frequency or match threshold")
     with db.connection() as conn:
         conn.execute("""UPDATE loops SET name=?,titles=?,location=?,remote_only=?,hybrid_only=?,
-         boards=?,min_score=?,mode=?,frequency_minutes=?,active=? WHERE id=?""",
+         boards=?,min_score=?,mode=?,frequency_minutes=?,active=?,email_template=?,excluded_companies=?,
+         auto_email=?,tailor_cv=?,experience=? WHERE id=?""",
          (_text(merged["name"],120),json.dumps(titles),_text(merged["location"],150),
-          int(bool(merged["remote_only"])),int(bool(merged["hybrid_only"])),json.dumps(boards),
-          score,mode,frequency,int(bool(merged["active"])),int(loop_id)))
+          int(_flag(merged["remote_only"])),int(_flag(merged["hybrid_only"])),json.dumps(boards),
+          score,mode,frequency,int(_flag(merged["active"])),_text(merged.get("email_template"),2000),
+          _text(merged.get("excluded_companies"),1000),int(_flag(merged.get("auto_email",1))),
+          int(_flag(merged.get("tailor_cv",1))),_text(merged.get("experience") or "junior",50),int(loop_id)))
     return db.row("SELECT * FROM loops WHERE id=?",(int(loop_id),))
+
+
+SENIORITY={"junior","graduate","senior","entry","level","trainee","apprentice","lead","principal","mid","intern","internship"}
+
+
+def title_matches(target, job_title):
+    """All meaningful words of a target title appear in the job title ("Junior Data Analyst" ~ "Data Analyst II")."""
+    wanted=[w for w in matching.normalize(target).split() if w not in SENIORITY]
+    have=set(matching.normalize(job_title).split())
+    return bool(wanted) and all(w in have for w in wanted)
 
 
 def _eligible(loop, job, learner, sponsor_names):
     titles=json.loads(loop["titles"])
-    job_title=matching.normalize(job["title"])
-    if not any(matching.normalize(title) in job_title or job_title in matching.normalize(title)
-               for title in titles):
+    if not any(title_matches(title, job["title"]) for title in titles):
         return 0,"excluded","Outside requested job titles"
-    boards=json.loads(loop["boards"])
+    boards=[b for b in json.loads(loop["boards"]) if b]
     source=job["source"].lower()
     if boards and "all" not in boards and not any(source==x or source=="csv-"+x for x in boards):
         return 0,"excluded","Job source excluded by this loop"
@@ -135,7 +151,8 @@ def _eligible(loop, job, learner, sponsor_names):
     actual=matching.normalize(job.get("location") or "")
     if desired not in ("united kingdom","uk","any","remote","") and actual and desired not in actual and "remote" not in actual:
         return 0,"review","Location outside preferred area; confirm commute or remote eligibility"
-    score,decision,reasons=matching.calculate(learner,job,sponsor_names)
+    score,decision,reasons=matching.calculate(learner,job,sponsor_names,loop_titles=True,
+                                              allow_senior=loop["experience"] in ("mid","senior","all"))
     if decision=="matched" and score < loop["min_score"]:
         decision="review"
         reasons.append("Below loop match threshold")
@@ -152,10 +169,7 @@ def run(loop_id, discover=False, max_queue=12):
     discovery={}
     if discover:
         discovery["employers"]=sources.sync_companies()
-        if os.getenv("REED_API_KEY") or (os.getenv("ADZUNA_APP_ID") and os.getenv("ADZUNA_APP_KEY")):
-            discovery["aggregators"]=[]
-            for title in json.loads(loop["titles"])[:3]:
-                discovery["aggregators"].append(sources.sync_aggregators(title))
+        discovery["boards"]=sources.search_for_loops([loop])
     jobs=db.rows("SELECT j.*,c.name AS company_name FROM jobs j LEFT JOIN companies c ON c.id=j.company_id WHERE j.active=1")
     sponsor_names={s["normalized_name"] for s in db.rows("SELECT normalized_name FROM sponsors")}
     now=datetime.now(timezone.utc)
@@ -175,12 +189,9 @@ def run(loop_id, discover=False, max_queue=12):
               score=excluded.score,reason=excluded.reason,updated_at=excluded.updated_at""",
               (loop["id"],job["id"],score,decision,reason,db.utc_now(),db.utc_now()))
             if (loop["mode"]=="auto" and decision=="matched" and learner["permission_to_apply"] and queued<max_queue):
-                before=conn.execute("SELECT id FROM applications WHERE learner_id=? AND job_id=?",(learner["id"],job["id"])).fetchone()
-                if before:
+                if not applyqueue.enqueue(conn,learner["id"],job,"loop_auto",loop["id"]):
                     stats["already_queued"]+=1
                     continue
-                conn.execute("""INSERT INTO applications(learner_id,job_id,method,updated_at)
-                   VALUES(?,?,?,?)""",(learner["id"],job["id"],"loop_auto",db.utc_now()))
                 conn.execute("UPDATE loop_jobs SET status='queued' WHERE loop_id=? AND job_id=?",(loop["id"],job["id"]))
                 queued+=1
         next_due=(now+timedelta(minutes=loop["frequency_minutes"])).isoformat(timespec="seconds")
@@ -204,13 +215,8 @@ def tick(discover=True):
         if discover:
             try:
                 discovery["companies"]=sources.sync_companies()
-                if os.getenv("REED_API_KEY") or (os.getenv("ADZUNA_APP_ID") and os.getenv("ADZUNA_APP_KEY")):
-                    # Search a bounded set of titles once across cohorts rather than 10x.
-                    terms=[]
-                    for entry in due:
-                        terms.extend(json.loads(entry["titles"]))
-                    for query in list(dict.fromkeys(terms))[:8]:
-                        sources.sync_aggregators(query)
+                # One search per distinct title set across cohorts rather than once per loop.
+                discovery["boards"]=sources.search_for_loops(due)
             except Exception as exc:
                 discovery["error"]=str(exc)[:200]
         result={"due":len(due),"runs":[],"errors":[],"discovery":discovery}
@@ -225,3 +231,14 @@ def tick(discover=True):
         return result
     finally:
         _tick_lock.release()
+
+
+def run_all():
+    """Re-score every active loop against jobs already found (e.g. after a browser board search)."""
+    results=[]
+    for loop in db.rows("SELECT id FROM loops WHERE active=1"):
+        try:
+            results.append(run(loop["id"]))
+        except ValueError as exc:
+            results.append({"loop_id":loop["id"],"error":str(exc)})
+    return {"runs":results}

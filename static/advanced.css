@@ -32,3 +32,5 @@ dialog.wide-dialog{width:min(850px,96vw);max-height:92vh;overflow:auto}
 .toggle{display:inline-flex;gap:7px;align-items:center}
 @media(max-width:1200px){.filter-grid{grid-template-columns:repeat(2,1fr)}.split-view{grid-template-columns:1fr}.analysis-layout{grid-template-columns:1fr}}
 @media(max-width:760px){.sidebar{position:static;max-height:none}.field-grid,.filter-grid{grid-template-columns:1fr}.wizard-progress{grid-template-columns:repeat(2,1fr)}.kanban-lane{min-width:210px;width:210px}.top-actions .btn{display:none}.loop-grid{grid-template-columns:1fr}}
+
+.settings-card{margin-bottom:16px}.settings-card .field-grid{margin-top:12px}.board-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:4px 12px;margin-top:6px}

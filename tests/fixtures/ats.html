@@ -1,0 +1,78 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Junior Data Analyst — Example Ltd careers</title>
+<style>
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+.upload input{position:absolute;opacity:0;width:1px;height:1px}
+.upload span{display:inline-block;padding:6px;border:1px solid #888}
+#options{border:1px solid #aaa}
+#cookie{position:fixed;bottom:0;left:0;right:0;background:#eee;padding:10px}
+.step{display:none}.step.on{display:block}
+</style></head><body>
+<header><nav><input type="search" placeholder="Search jobs" aria-label="Search jobs"></nav></header>
+<div id="cookie-banner" class="cookie"><p>We use cookies.</p><button id="cookie-accept">Accept all</button></div>
+<main>
+<h1>Junior Data Analyst</h1>
+<p>Example Ltd is hiring. You will use SQL, Python and Power BI. Questions? Contact Jane Recruiter at talent@example-ltd.co.uk.</p>
+<button id="open">Apply for this job</button>
+<form id="application" hidden>
+  <div class="step on" id="s1">
+    <label for="fn">First Name *</label><input id="fn" name="first_name" required>
+    <label for="ln">Last Name *</label><input id="ln" name="last_name" required>
+    <label for="em">Email *</label><input id="em" type="email" name="email" required>
+    <label for="ph">Phone</label><input id="ph" type="tel" name="phone">
+    <label class="upload"><span>Attach Resume/CV</span><input type="file" id="resume" name="resume" accept=".pdf"></label>
+    <label for="li">LinkedIn Profile</label><input id="li" name="linkedin">
+    <label for="visa">Will you now or in the future require visa sponsorship? *</label>
+    <select id="visa" name="visa" required><option value="">Select...</option><option value="y">Yes</option><option value="n">No</option></select>
+    <fieldset><legend>Are you legally authorised to work in the United Kingdom? *</legend>
+      <label><input class="sr" type="radio" name="auth" value="yes" required> Yes</label>
+      <label><input class="sr" type="radio" name="auth" value="no"> No</label>
+    </fieldset>
+    <fieldset><legend>Which tools have you used?</legend>
+      <label><input type="checkbox" name="tools" value="sql"> SQL</label>
+      <label><input type="checkbox" name="tools" value="python"> Python</label>
+      <label><input type="checkbox" name="tools" value="tableau"> Tableau</label>
+    </fieldset>
+    <label for="city">Location (city) *</label>
+    <input id="city" role="combobox" aria-autocomplete="list" aria-expanded="false" name="city" required autocomplete="off">
+    <ul id="options" role="listbox" hidden></ul>
+    <label for="why">Why do you want to work at Example Ltd?</label><textarea id="why" name="why"></textarea>
+    <label><input type="checkbox" id="consent" name="consent" required> I agree to the privacy policy</label>
+    <button type="button" id="next">Next</button>
+  </div>
+  <div class="step" id="s2">
+    <label for="yrs">How many years of experience do you have with SQL? *</label><input id="yrs" name="years_sql" required>
+    <label for="notice">Notice period</label><input id="notice" name="notice">
+    <button type="submit">Submit application</button>
+  </div>
+</form>
+</main>
+<script>
+document.getElementById('cookie-accept').onclick=()=>document.getElementById('cookie-banner').remove();
+document.getElementById('open').onclick=()=>{document.getElementById('application').hidden=false;document.getElementById('open').hidden=true};
+const city=document.getElementById('city'),list=document.getElementById('options');
+city.addEventListener('input',()=>{
+  list.innerHTML='';
+  if(!city.value)return list.hidden=true;
+  for(const place of ['London, England, United Kingdom','Londonderry, Northern Ireland'])
+    if(place.toLowerCase().startsWith(city.value.toLowerCase().slice(0,3))){const li=document.createElement('li');li.setAttribute('role','option');li.textContent=place;li.onclick=()=>{city.value=place;city.dataset.chosen='1';list.hidden=true};list.appendChild(li)}
+  list.hidden=!list.children.length;
+});
+document.getElementById('next').onclick=()=>{
+  const form=document.getElementById('application');
+  const s1=[...document.querySelectorAll('#s1 [required]')];
+  if(!s1.every(x=>x.type==='radio'?document.querySelector('input[name=auth]:checked'):x.type==='checkbox'?x.checked:x.value)||!city.dataset.chosen){
+    let err=document.getElementById('err');if(!err){err=document.createElement('div');err.id='err';err.setAttribute('role','alert');document.getElementById('s1').appendChild(err)}
+    err.textContent='Please complete all required fields';return;
+  }
+  document.getElementById('s1').classList.remove('on');document.getElementById('s2').classList.add('on');
+};
+document.getElementById('application').onsubmit=async e=>{
+  e.preventDefault();
+  const data=Object.fromEntries(new FormData(e.target));
+  data.tools=[...document.querySelectorAll('input[name=tools]:checked')].map(x=>x.value);
+  const file=document.getElementById('resume').files[0];
+  data.resume_name=file?file.name:'';data.resume_size=file?file.size:0;
+  await fetch('/record',{method:'POST',body:JSON.stringify(data)});
+  location.href='/thanks.html';
+};
+</script></body></html>

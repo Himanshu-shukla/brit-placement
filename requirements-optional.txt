@@ -1,4 +1,5 @@
-# Only needed for direct PDF export and optional Playwright assistance.
+# PDF CVs, server-side applications, PDF CV checks and LinkedIn/Indeed/Glassdoor search.
 reportlab>=4,<5
 playwright>=1.55,<2
 pypdf>=5,<7
+python-jobspy>=1.1,<2
