@@ -1,0 +1,4 @@
+# Only needed for direct PDF export and optional Playwright assistance.
+reportlab>=4,<5
+playwright>=1.55,<2
+pypdf>=5,<7

@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "Brit Placement Assistant",
+  "version": "1.0.0",
+  "description": "Connect to Placement OS for reviewed job applications and candidate form assistance.",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage",
+    "clipboardWrite"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1:8770/*"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Brit Placement Assistant"
+  }
+}

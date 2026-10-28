@@ -1,0 +1,28 @@
+services:
+  placement:
+    build:
+      context: .
+      dockerfile: ${PLACEMENT_DOCKERFILE:-Dockerfile}
+    restart: unless-stopped
+    init: true
+    ports:
+      - "127.0.0.1:8765:8765"
+    environment:
+      PLACEMENT_HOST: "0.0.0.0"
+      PLACEMENT_PORT: "8765"
+      PLACEMENT_SCHEDULER: "1"
+      REED_API_KEY: ${REED_API_KEY:-}
+      ADZUNA_APP_ID: ${ADZUNA_APP_ID:-}
+      ADZUNA_APP_KEY: ${ADZUNA_APP_KEY:-}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-}
+      AUTO_SUBMIT_ENABLED: ${AUTO_SUBMIT_ENABLED:-0}
+      AUTO_APPLY_ALLOWED_HOSTS: ${AUTO_APPLY_ALLOWED_HOSTS:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-465}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+    volumes:
+      - placement_data:/app/data
+volumes:
+  placement_data:

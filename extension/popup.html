@@ -1,0 +1,11 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="popup.css"><title>Brit Placement</title></head>
+<body><header><div class="brand"><span>B</span><div><b>BRIT INSTITUTE</b><small>PLACEMENT ASSISTANT</small></div></div><div class="status">HUMAN-REVIEWED</div></header>
+<main><label>Local backend API key<input type="password" id="token" placeholder="Paste server admin key"></label><button class="minor" id="connect">Connect / refresh candidates</button>
+<label>Candidate<select id="learner"><option value="">Connect to load candidates</option></select></label>
+<label>CV version<select id="cv-version"><option value="">Use manually attached CV</option></select></label>
+<div class="zone"><h3>Current job page</h3><p id="page">Open a job advert, then use the controls below.</p></div>
+<button class="primary" id="fill">Fill visible fields</button><button class="secondary" id="queue">Save job & queue for candidate</button>
+<div class="zone"><h3>One-click employer form</h3><p>Only for an employer website you explicitly allow. Pauses on missing questions or challenges.</p><label>Allowed employer hostnames (comma separated)<input id="allowed-hosts" placeholder="jobs.example.co.uk, careers.example.com"></label><button class="primary" id="auto">Apply on approved employer page</button></div>
+<button class="secondary" id="copy">Copy verified candidate details</button><button class="minor" id="resume">Open candidate CV</button>
+<p class="hint">On LinkedIn/Indeed, open Easy Apply and use <b>Fill visible fields</b> at each step; submit manually. Auto-submission is supported only on explicitly allowed employer sites. Never bypass login or CAPTCHA challenges.</p><div id="message" role="status"></div>
+</main><script src="form_engine.js"></script><script src="popup.js"></script></body></html>
