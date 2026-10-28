@@ -111,10 +111,10 @@ def render_pdf(content):
         if entries:
             heading(title)
         for entry in entries:
-            line = " — ".join(x for x in (entry.get("title"), entry.get("organisation")) if x)
+            line = text(" — ".join(str(x) for x in (entry.get("title"), entry.get("organisation")) if x))
             if entry.get("dates"):
-                line += f"  <font color='#5b6878'>({html.escape(str(entry['dates']))})</font>"
-            blocks.append(Paragraph(html.escape(line, quote=False).replace("&lt;font", "<font").replace("&lt;/font&gt;", "</font>").replace("'&gt;", "'>") if False else line, role))
+                line += f"  <font color='#5b6878'>({text(entry['dates'])})</font>"
+            blocks.append(Paragraph(line, role))
             for point in entry.get("bullets") or []:
                 blocks.append(Paragraph(text(point), bullet, bulletText="•"))
             blocks.append(Spacer(1, 3))
