@@ -27,10 +27,12 @@
   const SETTINGS=[
     ['AI (Groq)','Screening answers, CV tailoring and recruiter emails.',[
       ['GROQ_API_KEY','Groq API key','password','gsk_…'],['GROQ_MODEL','Groq model','text','llama-3.3-70b-versatile']]],
-    ['Automatic applications','Daily cap per learner and random pause between applications keep accounts safe.',[
+    ['Automatic applications','Low volume, spread over working hours, and stopping at the first CAPTCHA or checkpoint keep accounts safe.',[
       ['AUTO_SUBMIT_ENABLED','Submit applications automatically','bool'],['TAILOR_CV','Tailor the CV for every job','bool'],
-      ['AI_ANSWERS_AUTO_APPROVE','Reuse AI answers automatically','bool'],['DAILY_APPLY_LIMIT','Applications per learner per day','number','40'],
-      ['APPLY_DELAY_MIN_SECONDS','Min pause between applications (s)','number','45'],['APPLY_DELAY_MAX_SECONDS','Max pause (s)','number','120'],
+      ['AI_ANSWERS_AUTO_APPROVE','Reuse AI answers automatically','bool'],['PAUSE_ON_CHALLENGE','Stop the runner on CAPTCHA / checkpoint / login wall','bool'],
+      ['DAILY_APPLY_LIMIT','Applications per learner per day','number','15'],['HOURLY_APPLY_LIMIT','Applications per learner per hour','number','6'],
+      ['APPLY_ACTIVE_HOURS','Active hours, this PC’s time (e.g. 09-19)','text','09-19'],
+      ['APPLY_DELAY_MIN_SECONDS','Min pause between applications (s)','number','180'],['APPLY_DELAY_MAX_SECONDS','Max pause (s)','number','480'],
       ['AUTO_APPLY_ALLOWED_HOSTS','Company sites the server may apply on (* = all)','text','*'],['SERVER_HEADLESS','Server browser hidden','bool']]],
     ['Recruiter emails (SMTP)','Gmail: smtp.gmail.com, port 465, and a Google app password.',[
       ['AUTO_EMAIL_ENABLED','Email recruiters automatically','bool'],['EMAIL_GUESSING','Find emails from name patterns / MX','bool'],
@@ -65,7 +67,7 @@
         <p class="muted-line">Sources: ${esc(boards.length?boards.join(', '):'All configured sources')}</p>
         <div style="margin:12px 0"><b>${x.job_count||0}</b> matches · <b>${x.run_count}</b> cycles completed</div>
         ${x.last_error?`<div class="inline-alert">${esc(x.last_error)}</div>`:''}
-        <div class="loop-card-actions">${task('Run now','adv-run-loop',`data-id="${x.id}"`,'teal')}${task('View matches','adv-loop-view',`data-id="${x.id}"`)}${task(x.active?'Pause':'Resume','adv-loop-toggle',`data-id="${x.id}" data-active="${x.active?'0':'1'}"`,'alt')}</div>
+        <div class="loop-card-actions">${task('Auto-apply to all matches','adv-apply-all-loop',`data-id="${x.id}" data-learner="${x.learner_id}"`,'teal')}${task('Run now','adv-run-loop',`data-id="${x.id}"`)}${task('View matches','adv-loop-view',`data-id="${x.id}"`)}${task(x.active?'Pause':'Resume','adv-loop-toggle',`data-id="${x.id}" data-active="${x.active?'0':'1'}"`,'alt')}</div>
         <p class="muted-line">Next: ${esc(x.next_run_at?new Date(x.next_run_at).toLocaleString():'Not yet scheduled')}</p></article>`;
     }).join('');
     let matches='';
@@ -153,7 +155,7 @@
     `<section class="filters"><h3>ACTIVE FILTERS</h3><div class="filter-grid">${item('term','Job title or keywords','text','Data Analyst')}${item('location','Location','text','London')}${choices('source','Platform',filterOptions)}${choices('age','Date posted',[['','Any time'],['3','Last 3 days'],['7','Last week'],['14','Last 14 days'],['30','Last month']])}`+
     `${choices('seniority','Seniority',[['','All levels'],['junior','Junior'],['graduate','Graduate'],['analyst','Analyst']])}<label class="checkbox"><input type="checkbox" name="remote" ${cfg.remote?'checked':''}> Remote only</label></div>`+
     `<div class="filter-actions">${task('Reset','adv-search-reset','','alt')}${task('Apply filters','adv-search','','teal')}</div></section>`+
-    `<h2 class="subheading">${results.length} search results</h2><div class="split-view"><div class="results">`+
+    `<div class="rowlike"><h2 class="subheading">${results.length} search results</h2>${results.length?task(`Auto-apply to all ${results.length}`,'adv-apply-all-search','','teal'):''}</div><div class="split-view"><div class="results">`+
     results.map(x=>`<button class="job-result ${selected?.id===x.id?'selected':''}" data-action="adv-job-select" data-id="${x.id}"><strong>${esc(x.title)}</strong><small>${esc(x.company_name||'Employer')} · ${esc(x.location)}</small><div class="tag-row">${label(x.source)}</div></button>`).join('')+
     `</div><article class="job-details">${selected?`<h2>${esc(selected.title)}</h2><p class="muted">${esc(selected.company_name)} · ${esc(selected.location)}</p><div style="margin:16px 0">${links(selected.url,'Open original posting')} ${task('Queue candidate','queue-pick',`data-id="${selected.id}"`,'teal')} ${task('Find recruiter email','adv-find-recruiter',`data-id="${selected.id}"`)} ${task('Tailor CV','adv-tailor',`data-id="${selected.id}"`,'alt')}</div><div class="description">${esc(selected.description||'Description not available from this source')}</div>`:'Select a job to see its description.'}</article></div>`;
   }
@@ -274,6 +276,33 @@
     return response;
   }
 
+  // Talk to the Chrome extension through its content-script bridge (extension/bridge.js).
+  function extension(action,learnerId){
+    return new Promise(resolve=>{
+      const id=Math.random().toString(36).slice(2);
+      const done=value=>{clearTimeout(timer);window.removeEventListener('message',listen);resolve(value);};
+      const listen=e=>{if(e.source===window&&e.data?.source==='brit-extension'&&e.data.id===id)done(e.data);};
+      const timer=setTimeout(()=>done({missing:true}),1500);
+      window.addEventListener('message',listen);
+      window.postMessage({source:'brit-dashboard',id,action,learnerId:String(learnerId)},window.location.origin);
+    });
+  }
+
+  async function applyAll(ctx,learnerId,body,what){
+    const s=ctx.state,learner=s.learners.find(l=>l.id===Number(learnerId));
+    if(!learner)throw new Error('Choose a candidate');
+    const v=s.settings||{},limit=v.DAILY_APPLY_LIMIT||15,hourly=v.HOURLY_APPLY_LIMIT||6,hours=v.APPLY_ACTIVE_HOURS||'09-19';
+    const low=Math.round((v.APPLY_DELAY_MIN_SECONDS||180)/60),high=Math.round((v.APPLY_DELAY_MAX_SECONDS||480)/60);
+    if(!confirm(`Queue ${what} for ${learner.name} and start auto-applying now?\n\nChrome applies one job every ${low}–${high} min, at most ${hourly} an hour and ${limit} a day, between ${hours}h. It stops at the first CAPTCHA or LinkedIn checkpoint. Keep Chrome open and signed in to LinkedIn.`))return;
+    const r=await ctx.api('applications/bulk','POST',{learner_id:learner.id,...body});
+    const ext=await extension('apply-all',learner.id);
+    const queued=`Queued ${r.queued} job(s)${r.already_queued?`, ${r.already_queued} already queued`:''}.`;
+    if(ext.started)ctx.notice(`${queued} Chrome is applying now; progress appears in My applications.`);
+    else if(ext.missing)ctx.notice(`${queued} Chrome extension not detected on this page: load/reload it in chrome://extensions, reload this dashboard and press the button again (or switch on “Auto-apply to queued jobs” in the popup).`,true);
+    else ctx.notice(`${queued} ${ext.error}`,true);
+    await ctx.refresh();
+  }
+
   async function action(name,el,ctx){
     const s=ctx.state,api=ctx.api,refresh=ctx.refresh;
     if(!name.startsWith('adv-'))return false;
@@ -316,6 +345,15 @@
         const x=await api(`loops/${Number(el.dataset.id)}/run`,'POST',{discover:true});
         ctx.notice(`Cycle complete: ${x.matched} matches, ${x.review} reviews, ${x.queued} new applications`);
         await refresh();return true;
+      }
+      if(name==='adv-apply-all-loop'){
+        await applyAll(ctx,el.dataset.learner,{loop_id:Number(el.dataset.id)},'every matched job in this loop');return true;
+      }
+      if(name==='adv-apply-all-search'){
+        const jobs=searchFiltered(s);
+        const learner=s.learners.length===1?s.learners[0].id:Number(prompt('Candidate ID to apply for: '+s.learners.map(l=>l.id+' = '+l.name).join(', ')));
+        if(!learner)return true;
+        await applyAll(ctx,learner,{job_ids:jobs.map(x=>x.id)},`${jobs.length} job(s)`);return true;
       }
       if(name==='adv-tick'){
         const x=await api('scheduler/tick','POST',{discover:false});ctx.notice(`${x.due} loops ran`);await refresh();return true;

@@ -362,14 +362,17 @@ class Handler(BaseHTTPRequestHandler):
             candidate = db.row("SELECT permission_to_apply FROM learners WHERE id=?", (learner_id,))
             if not candidate or not candidate["permission_to_apply"]:
                 raise ValueError("Learner must consent before adding application")
-            if not db.row("SELECT 1 FROM jobs WHERE id=?", (job_id,)):
+            job = db.row("SELECT * FROM jobs WHERE id=?", (job_id,))
+            if not job:
                 raise ValueError("Job not found")
             with db.connection() as conn:
-                conn.execute("""INSERT INTO applications(learner_id,job_id,method,updated_at)
-                 VALUES(?,?,?,?) ON CONFLICT(learner_id,job_id) DO NOTHING""",
-                 (learner_id,job_id,str(data.get("method", "browser_assisted")),db.utc_now()))
+                # enqueue() sets the channel/apply URL so the auto-apply runners can claim it.
+                applyqueue.enqueue(conn, learner_id, job, str(data.get("method", "browser_assisted")))
                 rec = conn.execute("SELECT id FROM applications WHERE learner_id=? AND job_id=?", (learner_id,job_id)).fetchone()
             return self._json(201, {"id": rec[0]})
+        if path == "/api/applications/bulk":
+            return self._json(200, applyqueue.enqueue_many(int(data["learner_id"]), data.get("job_ids"),
+                                                           data.get("loop_id"), str(data.get("method") or "bulk")))
         if path.startswith("/api/applications/") and path.endswith("/status"):
             application_id = int(path.split("/")[3])
             status = str(data.get("status", "")).lower()

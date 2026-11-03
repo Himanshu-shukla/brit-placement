@@ -22,6 +22,31 @@ def applied_today(learner_id):
         (status='applying' OR (status='confirmed' AND submitted_at>=?))""", (int(learner_id), _today()))["n"]
 
 
+def _active_now(now=None):
+    """APPLY_ACTIVE_HOURS like "09-19" (local time of this PC); blank or "0-24" means any time."""
+    spec = str(settings.get("APPLY_ACTIVE_HOURS") or "").strip()
+    try:
+        start, end = (int(x) for x in spec.split("-"))
+    except ValueError:
+        return True
+    hour = (now or datetime.now()).hour
+    return start <= hour < end if start <= end else (hour >= start or hour < end)
+
+
+def pacing_block(learner_id):
+    """Why this learner may not start another automatic application right now, or None."""
+    if not _active_now():
+        return f"Outside active hours ({settings.get('APPLY_ACTIVE_HOURS')})"
+    if applied_today(learner_id) >= settings.number("DAILY_APPLY_LIMIT", 15):
+        return "Daily limit reached"
+    hour_ago = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat(timespec="seconds")
+    recent = db.row("""SELECT COUNT(*) AS n FROM applications WHERE learner_id=? AND
+        (status='applying' OR (status='confirmed' AND submitted_at>=?))""", (int(learner_id), hour_ago))["n"]
+    if recent >= settings.number("HOURLY_APPLY_LIMIT", 6):
+        return "Hourly limit reached"
+    return None
+
+
 def release_stale():
     cutoff = (datetime.now(timezone.utc) - timedelta(minutes=STALE_MINUTES)).isoformat(timespec="seconds")
     with db.connection() as conn:
@@ -39,10 +64,46 @@ def enqueue(conn, learner_id, job, method="loop_auto", loop_id=None):
     return cursor.rowcount > 0
 
 
+def enqueue_many(learner_id, job_ids=None, loop_id=None, method="bulk"):
+    """Queue many jobs for one learner: a loop's matched jobs, or an explicit list of job ids."""
+    learner = db.row("SELECT * FROM learners WHERE id=? AND active=1", (int(learner_id),))
+    if not learner or not learner["permission_to_apply"]:
+        raise ValueError("Learner consent is required before applying")
+    sql = "SELECT j.* FROM jobs j"
+    if loop_id:
+        sql += " JOIN loop_jobs lj ON lj.job_id=j.id WHERE lj.loop_id=? AND lj.status IN ('matched','favorite')"
+        params = [int(loop_id)]
+    else:
+        ids = [int(x) for x in (job_ids or [])][:500]
+        if not ids:
+            raise ValueError("No jobs selected")
+        sql += f" WHERE j.id IN ({','.join('?' * len(ids))})"
+        params = ids
+    stats = {"queued": 0, "already_queued": 0}
+    with db.connection() as conn:
+        for job in conn.execute(sql + " AND j.active=1", params).fetchall():
+            job = dict(job)
+            if enqueue(conn, learner["id"], job, method, loop_id):
+                stats["queued"] += 1
+            else:
+                # Rows queued before routing existed have no channel and are never claimed.
+                url = channels.target(job)
+                fixed = conn.execute("""UPDATE applications SET channel=?,apply_url=?,updated_at=?
+                    WHERE learner_id=? AND job_id=? AND channel='' AND status='queued'""",
+                    (channels.channel_for(url), url, db.utc_now(), learner["id"], job["id"])).rowcount
+                stats["queued" if fixed else "already_queued"] += 1
+            if loop_id:
+                conn.execute("UPDATE loop_jobs SET status='queued',updated_at=? WHERE loop_id=? AND job_id=?",
+                             (db.utc_now(), int(loop_id), job["id"]))
+    stats["applied_today"] = applied_today(learner["id"])
+    stats["limit"] = settings.number("DAILY_APPLY_LIMIT", 15)
+    db.log_event("bulk_queue", {"learner_id": learner["id"], "loop_id": loop_id, **stats})
+    return stats
+
+
 def claim(learner_id=None, channel_list=("extension", "server"), application_id=None):
     """Atomically claim the next queued application, honouring the daily limit."""
     release_stale()
-    limit = settings.number("DAILY_APPLY_LIMIT", 40)
     with db.connection() as conn:
         if application_id:
             rows = conn.execute("SELECT * FROM applications WHERE id=? AND status IN ('queued','prepared','needs_review')",
@@ -59,9 +120,8 @@ def claim(learner_id=None, channel_list=("extension", "server"), application_id=
             sql += " ORDER BY CASE a.channel WHEN 'extension' THEN 0 ELSE 1 END, a.id LIMIT 50"
             rows = conn.execute(sql, params).fetchall()
         for item in rows:
-            used = conn.execute("""SELECT COUNT(*) FROM applications WHERE learner_id=? AND
-                (status='applying' OR (status='confirmed' AND submitted_at>=?))""", (item["learner_id"], _today())).fetchone()[0]
-            if not application_id and used >= limit:
+            # A job picked by hand (application_id) skips pacing; automatic runs never do.
+            if not application_id and pacing_block(item["learner_id"]):
                 continue
             changed = conn.execute("""UPDATE applications SET status='applying',claimed_at=?,updated_at=?
                 WHERE id=? AND status=?""", (db.utc_now(), db.utc_now(), item["id"], item["status"])).rowcount
@@ -90,7 +150,8 @@ def payload(application, include_cv=True):
                 "location": job.get("location") or "", "description": str(job.get("description") or "")[:4000],
                 "url": job["url"]},
         "profile": profile, "answers": answers,
-        "delay": [settings.number("APPLY_DELAY_MIN_SECONDS", 45), settings.number("APPLY_DELAY_MAX_SECONDS", 120)],
+        "delay": [settings.number("APPLY_DELAY_MIN_SECONDS", 180), settings.number("APPLY_DELAY_MAX_SECONDS", 480)],
+        "pause_on_challenge": settings.number("PAUSE_ON_CHALLENGE", 1) == 1,
     }
     if include_cv:
         version = tailor.cv_for_application(application, loop)
@@ -106,7 +167,7 @@ def next_for_extension(learner_id, include_server=True):
     item = claim(learner_id, channel_list)
     if not item:
         return {"application": None, "applied_today": applied_today(learner_id),
-                "limit": settings.number("DAILY_APPLY_LIMIT", 40)}
+                "limit": settings.number("DAILY_APPLY_LIMIT", 15), "paused": pacing_block(learner_id)}
     try:
         return payload(item)
     except Exception as exc:
@@ -198,8 +259,8 @@ def retry(application_id):
 
 
 def jitter_delay():
-    low = settings.number("APPLY_DELAY_MIN_SECONDS", 45)
-    high = max(low, settings.number("APPLY_DELAY_MAX_SECONDS", 120))
+    low = settings.number("APPLY_DELAY_MIN_SECONDS", 180)
+    high = max(low, settings.number("APPLY_DELAY_MAX_SECONDS", 480))
     return random.uniform(low, high)
 
 

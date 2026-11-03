@@ -170,7 +170,8 @@ async function applyJob(payload, existingTabId = null, options = {}) {
           if (++idle >= 3) return {status: 'needs_review', reason: result.reason, steps};
           continue;
         default:
-          return {status: 'needs_review', reason: `${result.state}: ${result.reason || ''}`.trim(), unknown: result.unknown, steps, url: result.url};
+          return {status: 'needs_review', reason: `${result.state}: ${result.reason || ''}`.trim(), unknown: result.unknown, steps, url: result.url,
+                  challenge: ['blocked', 'login_required'].includes(result.state)};
       }
     }
     return {status: 'needs_review', reason: 'Too many steps without finishing', steps};
@@ -189,7 +190,7 @@ async function runQueue(force) {
   try {
     const payload = await api('extension/next', 'POST', {learner_id: Number(cfg.learnerId), include_server: !!cfg.companySites});
     if (!payload.application) {
-      await note('idle', `Queue empty · ${payload.applied_today || 0}/${payload.limit || ''} applied today`);
+      await note('idle', `${payload.paused || 'Queue empty'} · ${payload.applied_today || 0}/${payload.limit || ''} applied today`);
       return {idle: true};
     }
     await note('applying', `${payload.job.title} — ${payload.job.company}`);
@@ -197,7 +198,14 @@ async function runQueue(force) {
     try { outcome = await applyJob(payload); }
     catch (error) { outcome = {status: 'error', reason: String(error.message || error)}; }
     const saved = await api('extension/result', 'POST', {application_id: payload.application.id, ...outcome});
-    const [low, high] = payload.delay || [45, 120];
+    // A CAPTCHA, security checkpoint or login wall is the site asking for a person: stop everything
+    // until the user has dealt with it and switches the runner back on, rather than trying the next job.
+    if (outcome.challenge && payload.pause_on_challenge !== false) {
+      await chrome.storage.local.set({runner: false});
+      await note('paused', `Stopped: ${outcome.reason}. Open the site, resolve it yourself, then switch the runner back on.`);
+      return saved;
+    }
+    const [low, high] = payload.delay || [180, 480];
     await chrome.storage.local.set({nextAllowedAt: Date.now() + 1000 * (low + Math.random() * Math.max(0, high - low))});
     await note(saved.status, `${payload.job.title} — ${payload.job.company}: ${outcome.evidence || outcome.reason || saved.status}`);
     return saved;
@@ -252,8 +260,26 @@ async function applyHere(tabId, submit) {
   } finally { busy = false; }
 }
 
+// "Auto-apply to all" in the dashboard: switch the runner on and start now. The runner then works
+// through the whole queue, one job every 45–120 s (Settings), until it is empty or the daily limit is hit.
+async function dashboardCommand(message, sender) {
+  const cfg = await settings();
+  if (!sender.url || new URL(sender.url).origin !== new URL(cfg.backend).origin)
+    throw new Error(`Extension is connected to ${cfg.backend}; open the dashboard there`);
+  if (!cfg.token) throw new Error('Open the extension popup and press Connect first');
+  const wanted = String(message.learnerId || '');
+  if (message.action === 'status') return {installed: true, learnerId: cfg.learnerId, runner: cfg.runner, lastResult: cfg.lastResult};
+  if (message.action !== 'apply-all') throw new Error('Unknown dashboard command');
+  if (cfg.learnerId && wanted && cfg.learnerId !== wanted)
+    throw new Error('This Chrome profile is set to another candidate in the extension popup');
+  await chrome.storage.local.set({runner: true, learnerId: cfg.learnerId || wanted, nextAllowedAt: 0});
+  runQueue(false).catch(err => note('error', err.message));
+  return {started: true};
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const reply = promise => { promise.then(sendResponse, error => sendResponse({error: String(error.message || error)})); return true; };
+  if (message.type === 'dashboard') return reply(dashboardCommand(message, sender));
   if (message.type === 'brit-answers') return reply(api('questions/answer', 'POST', message.payload));
   if (message.type === 'apply-here') return reply(applyHere(message.tabId, message.submit !== false));
   if (message.type === 'run-queue') return reply(runQueue(true));

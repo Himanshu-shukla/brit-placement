@@ -192,7 +192,6 @@ def process_queue(limit=4):
       WHERE a.status='queued' AND a.channel IN ('server','') AND l.permission_to_apply=1
         AND NOT EXISTS (SELECT 1 FROM application_attempts at WHERE at.application_id=a.id AND at.engine='playwright')
       ORDER BY a.id LIMIT 100""")
-    daily = settings.number("DAILY_APPLY_LIMIT", 40)
     results = []
     for item in items:
         if len(results) >= max(0, min(int(limit), 10)):
@@ -200,7 +199,7 @@ def process_queue(limit=4):
         if not _allowed_host(item["url"]):
             db.run("UPDATE applications SET channel='extension' WHERE id=?", (item["id"],))
             continue
-        if applyqueue.applied_today(item["learner_id"]) >= daily:
+        if applyqueue.pacing_block(item["learner_id"]):
             continue
         try:
             outcome = process(item["id"], submit=True)

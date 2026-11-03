@@ -14,7 +14,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import app
-from placement import config, contacts, cv, db, matching, outreach, sources, ai
+from placement import config, contacts, cv, db, matching, outreach, settings, sources, ai
 
 
 class TempStorage(unittest.TestCase):
@@ -27,6 +27,8 @@ class TempStorage(unittest.TestCase):
         config.CV_DIR = config.DATA_DIR / "cvs"
         app.TOKEN_FILE = config.DATA_DIR / "admin-token.txt"
         db.initialize()
+        # Tests run at any hour; the pacing tests set active hours explicitly.
+        settings.update({"APPLY_ACTIVE_HOURS": ""})
 
     def tearDown(self):
         config.DATA_DIR, config.DB_PATH, config.CV_DIR = self.original

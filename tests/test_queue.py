@@ -84,6 +84,51 @@ class QueueTests(TempStorage):
         self.assertEqual(rows["https://jobs.lever.co/acme/1"]["loop_id"], task["id"])
 
 
+    def test_pacing_hourly_limit_and_active_hours(self):
+        first = self.add_job(11, "https://www.linkedin.com/jobs/view/11/")
+        self.add_job(12, "https://www.linkedin.com/jobs/view/12/")
+        settings.update({"HOURLY_APPLY_LIMIT": "1", "DAILY_APPLY_LIMIT": "10"})
+        claimed = applyqueue.claim(self.learner)
+        self.assertEqual(claimed["id"], first["id"])
+        applyqueue.record(first["id"], {"status": "submitted", "evidence": "Your application was sent"})
+        self.assertIsNone(applyqueue.claim(self.learner))
+        self.assertEqual(applyqueue.next_for_extension(self.learner)["paused"], "Hourly limit reached")
+        settings.update({"HOURLY_APPLY_LIMIT": "5"})
+        from datetime import datetime
+        settings.update({"APPLY_ACTIVE_HOURS": "09-19"})
+        self.assertFalse(applyqueue._active_now(datetime(2026, 1, 5, 22)))
+        self.assertTrue(applyqueue._active_now(datetime(2026, 1, 5, 10)))
+        settings.update({"APPLY_ACTIVE_HOURS": "22-06"})
+        self.assertTrue(applyqueue._active_now(datetime(2026, 1, 5, 23)))
+        self.assertFalse(applyqueue._active_now(datetime(2026, 1, 5, 12)))
+        hour = datetime.now().hour
+        settings.update({"APPLY_ACTIVE_HOURS": f"{(hour + 1) % 24:02d}-{(hour + 2) % 24:02d}"})
+        self.assertIn("Outside active hours", applyqueue.pacing_block(self.learner))
+        self.assertIsNone(applyqueue.claim(self.learner))
+
+    def test_bulk_queue_loop_matches_and_job_list(self):
+        li = db.upsert_job(self.company, "linkedin", "li-b1", "Data Analyst", "https://www.linkedin.com/jobs/view/71/",
+                           "SQL Excel", "London")
+        gh = db.upsert_job(self.company, "greenhouse", "gh-b1", "Data Analyst", "https://boards.greenhouse.io/acme/jobs/72",
+                           "SQL Excel", "London")
+        task = loops.create({"learner_id": self.learner, "titles": "Data Analyst", "mode": "review"})
+        loops.run(task["id"])
+        self.assertEqual(db.rows("SELECT * FROM applications"), [])
+        stats = applyqueue.enqueue_many(self.learner, loop_id=task["id"])
+        self.assertEqual((stats["queued"], stats["already_queued"]), (3, 0))
+        channels_by_job = {r["job_id"]: r["channel"] for r in db.rows("SELECT * FROM applications")}
+        self.assertEqual(channels_by_job, {self.job: "server", li: "extension", gh: "server"})
+        self.assertEqual({r["status"] for r in db.rows("SELECT status FROM loop_jobs")}, {"queued"})
+        # Explicit job list; rows queued before routing (blank channel) are repaired, not skipped.
+        db.run("UPDATE applications SET channel='' WHERE job_id=?", (li,))
+        stats = applyqueue.enqueue_many(self.learner, job_ids=[li, gh])
+        self.assertEqual((stats["queued"], stats["already_queued"]), (1, 1))
+        self.assertEqual(db.row("SELECT channel FROM applications WHERE job_id=?", (li,))["channel"], "extension")
+        db.run("UPDATE learners SET permission_to_apply=0 WHERE id=?", (self.learner,))
+        with self.assertRaises(ValueError):
+            applyqueue.enqueue_many(self.learner, job_ids=[li])
+
+
 class SourceTests(TempStorage):
     def test_settings_mask_secrets_and_keep_unchanged_mask(self):
         settings.update({"GROQ_API_KEY": "gsk_secret_1234", "DAILY_APPLY_LIMIT": "30"})
@@ -149,3 +194,12 @@ class ExtensionAPITests(test_workflows.APITests):
         self.assertIn("GROQ_MODEL", shown)
         code, tasks = self.request("/api/extension/search-tasks")
         self.assertEqual((code, tasks), (200, []))
+
+    def test_dashboard_queue_is_routed_for_runners(self):
+        learner, company, job = self.fixtures()
+        code, body = self.request("/api/applications", "POST", {"learner_id": learner, "job_id": job})
+        self.assertEqual(code, 201, body)
+        self.assertIn(db.row("SELECT channel FROM applications WHERE id=?", (body["id"],))["channel"], ("extension", "server"))
+        other = db.upsert_job(company, "linkedin", "li-api", "Data Analyst", "https://www.linkedin.com/jobs/view/88/", "SQL", "London")
+        code, stats = self.request("/api/applications/bulk", "POST", {"learner_id": learner, "job_ids": [job, other]})
+        self.assertEqual((code, stats["queued"], stats["already_queued"]), (200, 1, 1))
