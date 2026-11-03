@@ -8,7 +8,7 @@ DATA_DIR = Path(os.getenv("PLACEMENT_DATA_DIR", str(ROOT / "data"))).resolve()
 DB_PATH = DATA_DIR / "placement.sqlite3"
 CV_DIR = DATA_DIR / "cvs"
 HOST = os.getenv("PLACEMENT_HOST", "127.0.0.1")
-PORT = int(os.getenv("PLACEMENT_PORT", "8765"))
+PORT = int(os.getenv("PLACEMENT_PORT", "8770"))
 USER_AGENT = "BritInstitutePlacementBot/1.0 (+https://britinstitute.uk)"
 SOURCE_TIMEOUT = int(os.getenv("SOURCE_TIMEOUT", "15"))
 
