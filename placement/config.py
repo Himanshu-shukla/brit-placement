@@ -4,6 +4,23 @@ import os
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+
+
+def load_env_file(path=ROOT / ".env"):
+    """KEY=VALUE lines from .env; variables already set in the environment win."""
+    try:
+        lines = Path(path).read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        name, value = line.split("=", 1)
+        os.environ.setdefault(name.strip(), value.strip().strip("'\""))
+
+
+load_env_file()
 DATA_DIR = Path(os.getenv("PLACEMENT_DATA_DIR", str(ROOT / "data"))).resolve()
 DB_PATH = DATA_DIR / "placement.sqlite3"
 CV_DIR = DATA_DIR / "cvs"

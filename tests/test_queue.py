@@ -106,6 +106,21 @@ class QueueTests(TempStorage):
         self.assertIn("Outside active hours", applyqueue.pacing_block(self.learner))
         self.assertIsNone(applyqueue.claim(self.learner))
 
+    def test_captcha_or_login_goes_to_manual_list(self):
+        app = self.add_job(21, "https://www.linkedin.com/jobs/view/21/")
+        applyqueue.claim(application_id=app["id"])
+        saved = applyqueue.record(app["id"], {"status": "needs_review", "challenge": True,
+                                              "reason": "blocked: CAPTCHA / human verification on www.linkedin.com"})
+        self.assertEqual(saved["status"], "manual")
+        self.assertEqual(db.summary()["manual"], 1)
+        self.assertIsNone(applyqueue.claim(self.learner))  # never retried automatically
+        self.assertEqual(applyqueue.retry(app["id"])["status"], "queued")
+
+    def test_hourly_cap_off_by_default(self):
+        self.assertEqual(settings.number("HOURLY_APPLY_LIMIT"), 0)
+        self.assertEqual(settings.number("DAILY_APPLY_LIMIT"), 40)
+        self.assertIsNone(applyqueue.pacing_block(self.learner))
+
     def test_bulk_queue_loop_matches_and_job_list(self):
         li = db.upsert_job(self.company, "linkedin", "li-b1", "Data Analyst", "https://www.linkedin.com/jobs/view/71/",
                            "SQL Excel", "London")
@@ -127,6 +142,22 @@ class QueueTests(TempStorage):
         db.run("UPDATE learners SET permission_to_apply=0 WHERE id=?", (self.learner,))
         with self.assertRaises(ValueError):
             applyqueue.enqueue_many(self.learner, job_ids=[li])
+
+
+class EnvFileTests(TempStorage):
+    def test_env_file_fills_unset_variables_only(self):
+        import os
+        from placement import config
+        path = config.DATA_DIR / ".env"
+        path.write_text("# comment\nBRIT_TEST_HOURLY=5\nBRIT_TEST_HOURS='09-19'\nBRIT_TEST_SET=from-file\n", encoding="utf-8")
+        os.environ["BRIT_TEST_SET"] = "from-env"
+        try:
+            config.load_env_file(path)
+            self.assertEqual((os.environ["BRIT_TEST_HOURLY"], os.environ["BRIT_TEST_HOURS"]), ("5", "09-19"))
+            self.assertEqual(os.environ["BRIT_TEST_SET"], "from-env")
+        finally:
+            for name in ("BRIT_TEST_HOURLY", "BRIT_TEST_HOURS", "BRIT_TEST_SET"):
+                os.environ.pop(name, None)
 
 
 class SourceTests(TempStorage):

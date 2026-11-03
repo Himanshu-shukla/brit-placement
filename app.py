@@ -376,7 +376,7 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith("/api/applications/") and path.endswith("/status"):
             application_id = int(path.split("/")[3])
             status = str(data.get("status", "")).lower()
-            if status not in ("queued", "prepared", "needs_review", "confirmed", "interview", "offer", "hired", "rejected", "withdrawn"):
+            if status not in ("queued", "prepared", "needs_review", "manual", "confirmed", "interview", "offer", "hired", "rejected", "withdrawn"):
                 raise ValueError("Invalid status")
             current = db.row("SELECT * FROM applications WHERE id=?", (application_id,))
             if not current:

@@ -69,7 +69,11 @@ Some dropdowns (React-based, e.g. Greenhouse) ignore scripted clicks. For those 
 | Reed, Totaljobs, CWJobs, Jobsite, CV-Library, Guardian, NHS Jobs, Civil Service, Workday | Extension | Board's own apply flow (needs the learner's account) |
 | Greenhouse, Lever, Ashby, Workable, SmartRecruiters, Recruitee, Personio, company sites, Adzuna/Jooble/remote-board redirects | Server browser | Headless Chromium |
 
-If the server browser meets a CAPTCHA or a login page, it hands the job to the extension to retry in the learner's real browser. Anything that still can't be finished goes to **Need attention**, with the reason, e.g. a question the AI couldn't answer, a login, or a CAPTCHA. Fix the cause and press *Retry*.
+If the server browser meets a CAPTCHA or a login page, it hands the job to the extension to retry in the learner's real browser. If the extension meets one too, the job is saved under **My applications → Apply manually**: open it, apply yourself and press *I applied*. The runner carries on with the next job.
+
+Pacing comes from `.env` (or Settings, which overrides it once saved): `DAILY_APPLY_LIMIT` (default 40), `HOURLY_APPLY_LIMIT` (0 = no cap), `APPLY_ACTIVE_HOURS` (e.g. `09-19`; blank = any time), `APPLY_DELAY_MIN_SECONDS` / `APPLY_DELAY_MAX_SECONDS` (45 / 120).
+
+Anything else that can't be finished goes to **Need attention**, with the reason, e.g. a question the AI couldn't answer, a login, or a CAPTCHA. Fix the cause and press *Retry*.
 
 ## Job sources
 

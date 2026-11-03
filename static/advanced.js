@@ -9,7 +9,7 @@
   const label=(s)=>`<span class="pill">${esc(s)}</span>`;
   const head=(title,desc,buttons='')=>`<div class="hero"><div><h1>${title}</h1><p class="muted">${esc(desc)}</p></div><div class="hero-actions">${buttons}</div></div>`;
   const links=(url,title)=>`<a href="${esc(/^https:\/\//.test(url||'')?url:'#')}" rel="noreferrer noopener" target="_blank">${esc(title)}</a>`;
-  const statusPill=(value)=>`<span class="pill ${['dismissed','rejected','blocked','error'].includes(value)?'bad':['review','queued','prepared','needs_review'].includes(value)?'warn':''}">${esc(value)}</span>`;
+  const statusPill=(value)=>`<span class="pill ${['dismissed','rejected','blocked','error'].includes(value)?'bad':['review','queued','prepared','needs_review','manual'].includes(value)?'warn':''}">${esc(value)}</span>`;
   let wizard={step:0,data:{}};
 
   function render(tab,state){
@@ -27,12 +27,12 @@
   const SETTINGS=[
     ['AI (Groq)','Screening answers, CV tailoring and recruiter emails.',[
       ['GROQ_API_KEY','Groq API key','password','gsk_…'],['GROQ_MODEL','Groq model','text','llama-3.3-70b-versatile']]],
-    ['Automatic applications','Low volume, spread over working hours, and stopping at the first CAPTCHA or checkpoint keep accounts safe.',[
+    ['Automatic applications','Daily cap per learner and random pause between applications keep accounts safe. Blank fields use .env, then the defaults.',[
       ['AUTO_SUBMIT_ENABLED','Submit applications automatically','bool'],['TAILOR_CV','Tailor the CV for every job','bool'],
-      ['AI_ANSWERS_AUTO_APPROVE','Reuse AI answers automatically','bool'],['PAUSE_ON_CHALLENGE','Stop the runner on CAPTCHA / checkpoint / login wall','bool'],
-      ['DAILY_APPLY_LIMIT','Applications per learner per day','number','15'],['HOURLY_APPLY_LIMIT','Applications per learner per hour','number','6'],
-      ['APPLY_ACTIVE_HOURS','Active hours, this PC’s time (e.g. 09-19)','text','09-19'],
-      ['APPLY_DELAY_MIN_SECONDS','Min pause between applications (s)','number','180'],['APPLY_DELAY_MAX_SECONDS','Max pause (s)','number','480'],
+      ['AI_ANSWERS_AUTO_APPROVE','Reuse AI answers automatically','bool'],
+      ['DAILY_APPLY_LIMIT','Applications per learner per day','number','40'],['HOURLY_APPLY_LIMIT','Applications per learner per hour (0 = no cap)','number','0'],
+      ['APPLY_ACTIVE_HOURS','Active hours, this PC’s time (blank = any time)','text','09-19'],
+      ['APPLY_DELAY_MIN_SECONDS','Min pause between applications (s)','number','45'],['APPLY_DELAY_MAX_SECONDS','Max pause (s)','number','120'],
       ['AUTO_APPLY_ALLOWED_HOSTS','Company sites the server may apply on (* = all)','text','*'],['SERVER_HEADLESS','Server browser hidden','bool']]],
     ['Recruiter emails (SMTP)','Gmail: smtp.gmail.com, port 465, and a Google app password.',[
       ['AUTO_EMAIL_ENABLED','Email recruiters automatically','bool'],['EMAIL_GUESSING','Find emails from name patterns / MX','bool'],
@@ -84,7 +84,7 @@
   }
 
   function renderBoard(s){
-    const lanes=[['Saved',a=>['queued','prepared','applying','needs_review'].includes(a.status)],['Applied',a=>a.status==='confirmed'],
+    const lanes=[['Saved',a=>['queued','prepared','applying','needs_review','manual'].includes(a.status)],['Applied',a=>a.status==='confirmed'],
       ['Screened',a=>a.status==='interview'],['Offer received',a=>a.status==='offer'],['Placed',a=>a.status==='hired']];
     const board=lanes.map(([name,selector])=>{
       const list=s.applications.filter(selector);
@@ -291,9 +291,9 @@
   async function applyAll(ctx,learnerId,body,what){
     const s=ctx.state,learner=s.learners.find(l=>l.id===Number(learnerId));
     if(!learner)throw new Error('Choose a candidate');
-    const v=s.settings||{},limit=v.DAILY_APPLY_LIMIT||15,hourly=v.HOURLY_APPLY_LIMIT||6,hours=v.APPLY_ACTIVE_HOURS||'09-19';
-    const low=Math.round((v.APPLY_DELAY_MIN_SECONDS||180)/60),high=Math.round((v.APPLY_DELAY_MAX_SECONDS||480)/60);
-    if(!confirm(`Queue ${what} for ${learner.name} and start auto-applying now?\n\nChrome applies one job every ${low}–${high} min, at most ${hourly} an hour and ${limit} a day, between ${hours}h. It stops at the first CAPTCHA or LinkedIn checkpoint. Keep Chrome open and signed in to LinkedIn.`))return;
+    const v=s.settings||{},limit=v.DAILY_APPLY_LIMIT||40,low=v.APPLY_DELAY_MIN_SECONDS||45,high=v.APPLY_DELAY_MAX_SECONDS||120;
+    const hourly=Number(v.HOURLY_APPLY_LIMIT)>0?`, at most ${v.HOURLY_APPLY_LIMIT} an hour`:'',hours=v.APPLY_ACTIVE_HOURS?`, only between ${v.APPLY_ACTIVE_HOURS}h`:'';
+    if(!confirm(`Queue ${what} for ${learner.name} and start auto-applying now?\n\nChrome applies one job every ${low}–${high} s, up to ${limit} a day${hourly}${hours}. Jobs blocked by a CAPTCHA or login go to “Apply manually”. Keep Chrome open and signed in to LinkedIn.`))return;
     const r=await ctx.api('applications/bulk','POST',{learner_id:learner.id,...body});
     const ext=await extension('apply-all',learner.id);
     const queued=`Queued ${r.queued} job(s)${r.already_queued?`, ${r.already_queued} already queued`:''}.`;

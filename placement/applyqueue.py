@@ -37,12 +37,13 @@ def pacing_block(learner_id):
     """Why this learner may not start another automatic application right now, or None."""
     if not _active_now():
         return f"Outside active hours ({settings.get('APPLY_ACTIVE_HOURS')})"
-    if applied_today(learner_id) >= settings.number("DAILY_APPLY_LIMIT", 15):
+    if applied_today(learner_id) >= settings.number("DAILY_APPLY_LIMIT", 40):
         return "Daily limit reached"
     hour_ago = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat(timespec="seconds")
     recent = db.row("""SELECT COUNT(*) AS n FROM applications WHERE learner_id=? AND
         (status='applying' OR (status='confirmed' AND submitted_at>=?))""", (int(learner_id), hour_ago))["n"]
-    if recent >= settings.number("HOURLY_APPLY_LIMIT", 6):
+    hourly = settings.number("HOURLY_APPLY_LIMIT", 0)
+    if hourly > 0 and recent >= hourly:
         return "Hourly limit reached"
     return None
 
@@ -96,7 +97,7 @@ def enqueue_many(learner_id, job_ids=None, loop_id=None, method="bulk"):
                 conn.execute("UPDATE loop_jobs SET status='queued',updated_at=? WHERE loop_id=? AND job_id=?",
                              (db.utc_now(), int(loop_id), job["id"]))
     stats["applied_today"] = applied_today(learner["id"])
-    stats["limit"] = settings.number("DAILY_APPLY_LIMIT", 15)
+    stats["limit"] = settings.number("DAILY_APPLY_LIMIT", 40)
     db.log_event("bulk_queue", {"learner_id": learner["id"], "loop_id": loop_id, **stats})
     return stats
 
@@ -150,8 +151,7 @@ def payload(application, include_cv=True):
                 "location": job.get("location") or "", "description": str(job.get("description") or "")[:4000],
                 "url": job["url"]},
         "profile": profile, "answers": answers,
-        "delay": [settings.number("APPLY_DELAY_MIN_SECONDS", 180), settings.number("APPLY_DELAY_MAX_SECONDS", 480)],
-        "pause_on_challenge": settings.number("PAUSE_ON_CHALLENGE", 1) == 1,
+        "delay": [settings.number("APPLY_DELAY_MIN_SECONDS", 45), settings.number("APPLY_DELAY_MAX_SECONDS", 120)],
     }
     if include_cv:
         version = tailor.cv_for_application(application, loop)
@@ -167,7 +167,7 @@ def next_for_extension(learner_id, include_server=True):
     item = claim(learner_id, channel_list)
     if not item:
         return {"application": None, "applied_today": applied_today(learner_id),
-                "limit": settings.number("DAILY_APPLY_LIMIT", 15), "paused": pacing_block(learner_id)}
+                "limit": settings.number("DAILY_APPLY_LIMIT", 40), "paused": pacing_block(learner_id)}
     try:
         return payload(item)
     except Exception as exc:
@@ -234,6 +234,11 @@ def record(application_id, data, engine="chrome_extension"):
         db.run("UPDATE applications SET status='queued',channel='extension',notes=?,updated_at=? WHERE id=?",
                (reason or "Retrying in the candidate's browser", now, application["id"]))
         result = "queued"
+    elif data.get("challenge") or status in ("blocked", "login_required"):
+        # CAPTCHA, security checkpoint or login wall: kept for the candidate to apply by hand.
+        db.run("UPDATE applications SET status='manual',notes=?,updated_at=? WHERE id=?",
+               (reason or "Needs a person to apply", now, application["id"]))
+        result = "manual"
     elif status == "prepared":
         db.run("UPDATE applications SET status='prepared',notes=?,updated_at=? WHERE id=?", (reason, now, application["id"]))
         result = "prepared"
@@ -259,8 +264,8 @@ def retry(application_id):
 
 
 def jitter_delay():
-    low = settings.number("APPLY_DELAY_MIN_SECONDS", 180)
-    high = max(low, settings.number("APPLY_DELAY_MAX_SECONDS", 480))
+    low = settings.number("APPLY_DELAY_MIN_SECONDS", 45)
+    high = max(low, settings.number("APPLY_DELAY_MAX_SECONDS", 120))
     return random.uniform(low, high)
 
 

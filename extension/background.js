@@ -198,14 +198,7 @@ async function runQueue(force) {
     try { outcome = await applyJob(payload); }
     catch (error) { outcome = {status: 'error', reason: String(error.message || error)}; }
     const saved = await api('extension/result', 'POST', {application_id: payload.application.id, ...outcome});
-    // A CAPTCHA, security checkpoint or login wall is the site asking for a person: stop everything
-    // until the user has dealt with it and switches the runner back on, rather than trying the next job.
-    if (outcome.challenge && payload.pause_on_challenge !== false) {
-      await chrome.storage.local.set({runner: false});
-      await note('paused', `Stopped: ${outcome.reason}. Open the site, resolve it yourself, then switch the runner back on.`);
-      return saved;
-    }
-    const [low, high] = payload.delay || [180, 480];
+    const [low, high] = payload.delay || [45, 120];
     await chrome.storage.local.set({nextAllowedAt: Date.now() + 1000 * (low + Math.random() * Math.max(0, high - low))});
     await note(saved.status, `${payload.job.title} — ${payload.job.company}: ${outcome.evidence || outcome.reason || saved.status}`);
     return saved;

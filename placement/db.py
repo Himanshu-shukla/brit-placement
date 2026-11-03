@@ -305,6 +305,7 @@ def summary():
         result["emails_sent"] = conn.execute("SELECT COUNT(*) FROM outreach WHERE status IN ('sent','replied')").fetchone()[0]
         result["pending_applications"] = conn.execute("SELECT COUNT(*) FROM applications WHERE status IN ('queued','prepared','applying')").fetchone()[0]
         result["needs_review"] = conn.execute("SELECT COUNT(*) FROM applications WHERE status='needs_review'").fetchone()[0]
+        result["manual"] = conn.execute("SELECT COUNT(*) FROM applications WHERE status='manual'").fetchone()[0]
         result["applied_today"] = conn.execute(
             "SELECT COUNT(*) FROM applications WHERE status='confirmed' AND submitted_at>=?", (utc_now()[:10],)).fetchone()[0]
         return result

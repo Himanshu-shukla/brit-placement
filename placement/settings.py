@@ -18,12 +18,11 @@ DEFAULTS = {
     # Automatic applications
     "AUTO_SUBMIT_ENABLED": "1",
     "AUTO_APPLY_ALLOWED_HOSTS": "*",
-    "DAILY_APPLY_LIMIT": "15",
-    "HOURLY_APPLY_LIMIT": "6",
-    "APPLY_ACTIVE_HOURS": "09-19",
-    "APPLY_DELAY_MIN_SECONDS": "180",
-    "APPLY_DELAY_MAX_SECONDS": "480",
-    "PAUSE_ON_CHALLENGE": "1",
+    "DAILY_APPLY_LIMIT": "40",
+    "HOURLY_APPLY_LIMIT": "0",          # 0 = no hourly cap
+    "APPLY_ACTIVE_HOURS": "",           # e.g. "09-19" (this PC's time); blank = any time
+    "APPLY_DELAY_MIN_SECONDS": "45",
+    "APPLY_DELAY_MAX_SECONDS": "120",
     "SERVER_HEADLESS": "1",
     "TAILOR_CV": "1",
     "AI_ANSWERS_AUTO_APPROVE": "1",
